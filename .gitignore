@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude Code session state
+.claude/
+
+# Local pi-specific notes (gitignored, like radio project's pattern)
+CLAUDE.local.md
+
+# Runtime state — never commit
+**/active.env
+**/scanner.env
+**/talkgroups.json
+**/tles.txt
+**/tles.json
+**/calls.db
+**/ais.db
+**/scanner/state/*
+/run/scanner/*
+
+# Real config files (only .example versions in git)
+files/etc/scanner/*.env
+!files/etc/scanner/*.env.example
+files/etc/scanner/talkgroups.json
+!files/etc/scanner/talkgroups.json.example
+
+# Captured artifacts (regenerable)
+**/noaa/raw/*.wav
+**/noaa/images/*.png
+**/acars/*.log
+**/ais/*.nmea
+**/calls/*.mp3
+
+# Logs / temp
+*.log
+/tmp/
+*.tar.gz
+*.tar.bz2
+*.zip
