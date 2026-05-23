@@ -50,10 +50,12 @@
             -->
             <frequency>TODO_CONTROL_CHANNEL_HZ</frequency>
             <!--
-              Leave blank to use the first available RTL-SDR tuner (device index 0).
-              To pin to the Nooelec specifically, enter its serial: 22012952
+              Pin to the Nooelec RTL-SDR by serial number. This prevents SDRTrunk
+              from accidentally trying to use the RSPdx-R2 (the radio project's dongle)
+              during device enumeration at startup.
+              Serial confirmed via: rtl_test -t  → SN: 22012952
             -->
-            <preferredTunerName/>
+            <preferredTunerName>22012952</preferredTunerName>
         </sourceConfiguration>
 
         <recordConfiguration>
