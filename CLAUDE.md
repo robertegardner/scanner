@@ -21,10 +21,14 @@ this project uses the spare Nooelec on a separate USB port.
 
 ## Status
 
-**Skeleton — no implementation yet.** Architecture is designed, hardware is
-being ordered, code will be built with Claude Code on the Pi when the antenna
-arrives. This file captures the planned design so the first build session
-doesn't have to re-derive it.
+**Stages 0–5 complete and running on the Pi** (as of 2026-05-23).
+
+- Scheduler, EMS job, NOAA APT job, pass predictor, Flask UI — all implemented and deployed.
+- systemd units enabled; services start on boot.
+- VHF dipole connected: NOAA APT captures working. **Discone arriving soon** for MOSWIN 700 MHz coverage.
+- First NOAA satellite images expected imminently (pass watcher is live, TLEs current).
+
+Next work: verify NOAA image quality once first pass completes, then MOSWIN P25 decoding once discone arrives, then Stage 6 (AIS).
 
 ## Where things will go
 

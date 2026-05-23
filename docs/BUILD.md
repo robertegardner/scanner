@@ -3,7 +3,11 @@
 Staged implementation. Each stage produces something useful on its own,
 so we can stop at any point and have a working system at that level.
 
-## Stage 0 — Hardware ready
+**Current state (2026-05-23):** Stages 0–5 complete and running.
+VHF dipole connected (works for NOAA APT). Discone arriving soon for MOSWIN 700 MHz.
+Next: verify NOAA images, then MOSWIN decoding, then Stage 6 (AIS).
+
+## Stage 0 — Hardware ready ✓
 
 **Prereqs:**
 - Pi 5 already running the radio project at `/srv/radio` and `/opt/sdr-tuner`
@@ -19,11 +23,11 @@ so we can stop at any point and have a working system at that level.
 
 **Done when:** both SDRs visible, radio project unaffected.
 
-## Stage 1 — Repository skeleton
+## Stage 1 — Repository skeleton ✓
 
 This is the current state. Repo exists, docs in place, no code yet.
 
-## Stage 2 — Standalone EMS scanner
+## Stage 2 — Standalone EMS scanner ✓
 
 Get a working P25 trunked decoder running under the scheduler. This
 validates the antenna, the dongle, and the software stack.
@@ -55,12 +59,11 @@ Optionally set the `<nac>` element to the decimal NAC value.
 
 ### 2c — Test SDRTrunk headless
 
-Run SDRTrunk manually as the scanner user to verify the playlist loads and
-the control channel decodes:
+SDRTrunk 0.6.1 is a jlink distribution (not a fat jar). Run via the launcher:
 
 ```bash
-sudo -u scanner java -Xmx512m \
-  -jar /opt/scanner/sdrtrunk/sdrtrunk-linux-aarch64-latest.jar \
+sudo -u scanner env SDR_TRUNK_OPTS="-Xmx512m" \
+  /opt/scanner/sdrtrunk/sdr-trunk-latest \
   --headless \
   --home /var/lib/scanner/sdrtrunk
 ```
@@ -100,7 +103,7 @@ The dashboard is at `http://<pi-ip>:8081/`.
 **Done when:** you see P25 control channel decoding in the logs and at least
 one EMS call recording on disk.
 
-## Stage 3 — Standalone NOAA APT
+## Stage 3 — Standalone NOAA APT ✓
 
 Same idea — get satellite imagery capture working as a one-shot before
 worrying about scheduling.
@@ -116,7 +119,7 @@ worrying about scheduling.
 
 **Done when:** you have at least one decoded image from one real pass.
 
-## Stage 4 — Scheduler MVP
+## Stage 4 — Scheduler MVP ✓
 
 Now wire Stages 2 and 3 together with a scheduler that owns the SDR.
 
@@ -131,7 +134,7 @@ Now wire Stages 2 and 3 together with a scheduler that owns the SDR.
 **Done when:** the scheduler runs EMS by default, automatically preempts
 for NOAA passes, and resumes EMS after.
 
-## Stage 5 — Flask UI
+## Stage 5 — Flask UI ✓
 
 Now we add the dashboard.
 
