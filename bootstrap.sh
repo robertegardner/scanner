@@ -62,6 +62,7 @@ install -d -o scanner -g scanner -m 755 \
   /var/lib/scanner/sdrtrunk \
   /var/lib/scanner/sdrtrunk/recordings \
   /var/lib/scanner/sdrtrunk/playlists \
+  /var/lib/scanner/noaa \
   /var/lib/scanner/noaa/images \
   /var/lib/scanner/noaa/raw \
   /var/lib/scanner/manual \

@@ -19,7 +19,7 @@ _SATELLITES = {
     "NOAA 19": 137.100,
 }
 
-_TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=noaa&FORMAT=tle"
+_TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle"
 _TLE_PATH = Path("/var/lib/scanner/noaa/weather.tle")
 _MIN_ELEVATION = 20.0   # degrees — passes below this are too weak to bother
 _TLE_MAX_AGE_S = 86400  # refresh TLEs once per day
