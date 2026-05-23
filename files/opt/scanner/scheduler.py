@@ -14,7 +14,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +22,8 @@ from flask import Flask, jsonify, request
 
 from jobs import Job, JobResult
 from jobs.ems_scanner import EMSJob
+from jobs.noaa_apt import NOAAJob
+from lib.pass_predictor import upcoming_passes, update_tles
 from lib.queue import JobQueue
 from lib.sdr import SDRToken
 
@@ -151,11 +153,12 @@ class Scheduler:
         self._lock = threading.Lock()
         self._activity: deque[dict] = deque(maxlen=100)
         self._manual_job: Optional[ManualJob] = None
+        self._upcoming_passes: list[dict] = []
 
     def start(self) -> None:
         self._queue.push(EMSJob(self._config))
-        t = threading.Thread(target=self._loop, daemon=True, name="scheduler-loop")
-        t.start()
+        threading.Thread(target=self._loop, daemon=True, name="scheduler-loop").start()
+        threading.Thread(target=self._pass_watcher, daemon=True, name="pass-watcher").start()
         log.info("Scheduler started")
 
     def _loop(self) -> None:
@@ -185,6 +188,55 @@ class Scheduler:
 
             if job.should_requeue():
                 self._queue.push(job)
+
+    def _pass_watcher(self) -> None:
+        """Background thread: predict NOAA passes and queue them ~5 min before AOS."""
+        queued: set[str] = set()
+
+        while True:
+            now = datetime.now(timezone.utc)
+
+            try:
+                passes = upcoming_passes(hours_ahead=24.0)
+            except Exception as e:
+                log.warning("Pass prediction error: %s", e)
+                time.sleep(60)
+                continue
+
+            self._upcoming_passes = [
+                {
+                    "satellite": p.satellite,
+                    "freq_mhz": p.freq_mhz,
+                    "aos": p.aos.isoformat(),
+                    "los": p.los.isoformat(),
+                    "max_el": p.max_el,
+                }
+                for p in passes[:10]
+            ]
+
+            for p in passes:
+                key = f"{p.satellite}|{p.aos.isoformat()}"
+                if key in queued:
+                    continue
+                queue_at = p.aos - timedelta(minutes=5)
+                if not (queue_at <= now <= p.los):
+                    continue
+                # Pass is imminent or in progress — calculate remaining duration
+                elapsed = max(0.0, (now - p.aos).total_seconds())
+                duration_s = int((p.los - p.aos).total_seconds()) - int(elapsed) + 30
+                if duration_s < 60:
+                    continue
+                job = NOAAJob(p.satellite, p.freq_mhz, duration_s, self._config)
+                self.push_job(job)
+                queued.add(key)
+                log.info("Queued NOAA pass: %s AOS=%s max_el=%.1f°",
+                         p.satellite, p.aos.strftime("%H:%M UTC"), p.max_el)
+
+            # Expire keys older than 3 hours
+            cutoff = (now - timedelta(hours=3)).isoformat()
+            queued = {k for k in queued if k.split("|")[1] > cutoff}
+
+            time.sleep(60)
 
     def _next_job(self) -> Job:
         while True:
@@ -252,6 +304,7 @@ class Scheduler:
             "queue": [{"name": j.name, "priority": j.priority, "detail": j.status_detail()}
                       for j in queue_jobs],
             "recent": list(self._activity)[:20],
+            "upcoming_passes": self._upcoming_passes[:5],
         }
 
     def recent_calls(self, limit: int = 50) -> list[dict]:
@@ -321,6 +374,10 @@ def create_api(scheduler: Scheduler) -> Flask:
     @api.route("/manual_recordings")
     def manual_recordings():
         return jsonify(scheduler.recent_manual())
+
+    @api.route("/passes")
+    def passes():
+        return jsonify(scheduler._upcoming_passes)
 
     return api
 

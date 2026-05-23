@@ -89,6 +89,11 @@ def api_calls():
     return jsonify(_sched(f"/calls?limit={limit}"))
 
 
+@app.route("/api/passes")
+def api_passes():
+    return jsonify(_sched("/passes"))
+
+
 # ---------------------------------------------------------------------------
 # File serving
 # ---------------------------------------------------------------------------

@@ -73,7 +73,7 @@ install -d -o scanner -g scanner -m 755 \
 log "Creating Python virtual environment"
 python3 -m venv /opt/scanner/venv
 /opt/scanner/venv/bin/pip install --quiet --upgrade pip
-/opt/scanner/venv/bin/pip install --quiet flask requests
+/opt/scanner/venv/bin/pip install --quiet flask requests pyorbital
 
 # ---------------------------------------------------------------------------
 # 5. SDRTrunk
@@ -135,14 +135,35 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. sudoers
+# 7. noaa-apt
+# ---------------------------------------------------------------------------
+NOAA_APT_VERSION="1.4.1"
+NOAA_APT_BIN="/usr/local/bin/noaa-apt"
+
+if [[ ! -f "$NOAA_APT_BIN" ]]; then
+  log "Downloading noaa-apt v${NOAA_APT_VERSION} (aarch64)"
+  TMP=$(mktemp -d)
+  curl -L --progress-bar \
+    "https://github.com/martinber/noaa-apt/releases/download/v${NOAA_APT_VERSION}/noaa-apt-${NOAA_APT_VERSION}-aarch64-linux-gnu-nogui.zip" \
+    -o "$TMP/noaa-apt.zip"
+  unzip -q "$TMP/noaa-apt.zip" -d "$TMP/noaa-apt-extracted"
+  find "$TMP/noaa-apt-extracted" -name "noaa-apt" -type f \
+    -exec install -m 755 {} "$NOAA_APT_BIN" \;
+  rm -rf "$TMP"
+  log "noaa-apt installed at $NOAA_APT_BIN"
+else
+  log "noaa-apt already installed — skipping"
+fi
+
+# ---------------------------------------------------------------------------
+# 9. sudoers
 # ---------------------------------------------------------------------------
 log "Installing sudoers"
 install -m 440 "$REPO/files/etc/sudoers.d/scanner" /etc/sudoers.d/scanner
 visudo -c -f /etc/sudoers.d/scanner
 
 # ---------------------------------------------------------------------------
-# 8. systemd units
+# 10. systemd units
 # ---------------------------------------------------------------------------
 log "Installing systemd units"
 cp "$REPO/files/etc/systemd/system/scanner-scheduler.service" /etc/systemd/system/
@@ -151,7 +172,7 @@ systemctl daemon-reload
 systemctl enable scanner-scheduler.service scanner-ui.service
 
 # ---------------------------------------------------------------------------
-# 9. Initial deploy
+# 11. Initial deploy
 # ---------------------------------------------------------------------------
 log "Running initial deploy"
 "$REPO/deploy.sh"
