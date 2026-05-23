@@ -23,7 +23,7 @@ apt-get install -y --no-install-recommends \
   rtl-sdr \
   sox \
   libsox-fmt-mp3 \
-  openjdk-17-jre-headless \
+  openjdk-21-jre-headless \
   rsync \
   curl \
   git
