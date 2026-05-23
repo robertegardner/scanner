@@ -1,58 +1,53 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!--
-  SDRTrunk playlist — Cape Girardeau County MOSWIN (APCO P25 Phase 1, VHF).
+  SDRTrunk playlist — Cape Girardeau County MOSWIN (APCO P25 Phase II, 700 MHz).
 
-  Fill in the two TODO values from RadioReference before first use:
-    https://www.radioreference.com/db/browse/ctid/1265
+  RadioReference source: https://www.radioreference.com/db/sid/6847
+  System: Missouri Statewide Wireless Interoperable Network (MOSWIN)
+  System ID: 1CE  |  WACN: BEE00  |  NAC: 0x1C3 (decimal 451)
 
-  On that page, find the MOSWIN system entry. Open it and look for the
-  Cape Girardeau site. You need:
+  Cape Girardeau sites (all 700 MHz — NOT VHF):
+    Site 033 (Cape Girardeau 700)   CC: 769.16875, 769.41875 MHz
+    Site 055 (Cape Girardeau City)  CC: 770.28125, 770.58125 MHz
+    Site 060 (Trail of Tears 700)   CC: 769.15625, 769.40625 MHz
 
-    1. Control Channel frequency (Hz).
-       Example: if RadioReference shows "154.6250" → enter 154625000
+  Antenna note: 700 MHz requires a wideband antenna (discone rated 25-1300 MHz).
+  A VHF dipole tuned for 140 MHz will NOT receive this band.
 
-    2. NAC (Network Access Code), shown as a hex value like "0x293".
-       Convert to decimal: 0x293 = 659.  Enter the decimal integer.
-
-  After editing, this file is installed to:
+  This file is installed to:
     /var/lib/scanner/sdrtrunk/playlists/cape-county.xml
   by bootstrap.sh (only if that file does not already exist).
-
-  If SDRTrunk is not decoding: open its GUI once on a workstation (or with
-  X forwarding), configure the system there, and copy the generated playlist
-  XML back to the Pi. The GUI validates the config on save.
 -->
 <playlist timestamp="2026-05-23T00:00:00.000Z" version="2">
     <channel enabled="true" autoStart="true" order="0">
         <name>Cape County MOSWIN</name>
 
         <decodeConfiguration type="P25_PHASE1">
-            <!-- CQPSK is standard modulation for APCO25 Phase 1 VHF. -->
+            <!--
+              Control channel modulation is C4FM/CQPSK (Phase 1 FSK) even on Phase II
+              sites — SDRTrunk auto-detects TDMA voice from the control channel messages.
+            -->
             <modulation>CQPSK</modulation>
             <!-- Skip data/PDU bursts (GPS pings, MDT frames) — voice calls only. -->
             <ignoreDataCalls>true</ignoreDataCalls>
             <!--
-              Optional: NAC filter.  If set, only decode traffic matching this NAC.
-              Avoids picking up a neighboring system on the same frequency.
-              TODO: fill in the decimal NAC from RadioReference (e.g. 659 for 0x293).
-              Leave as 0 to disable filtering (accept any NAC).
+              NAC filter: only decode traffic matching MOSWIN's NAC 0x1C3 (= 451).
+              Prevents latching onto adjacent systems on nearby frequencies.
             -->
-            <nac>0</nac>
+            <nac>451</nac>
         </decodeConfiguration>
 
         <sourceConfiguration type="TUNER">
             <!--
-              TODO: Replace with the MOSWIN control channel frequency in Hz.
-              RadioReference → Cape Girardeau County → MOSWIN → Cape Girardeau site
-              → Site Frequencies → look for the "CC" (Control Channel) entry.
-              Multiply MHz × 1,000,000 and drop the decimal.
-              Example: 154.6250 MHz → 154625000
+              Site 033 (Cape Girardeau 700) primary control channel.
+              769.16875 MHz × 1,000,000 = 769168750 Hz
+              Alternate: 769418750 (secondary CC on same site)
             -->
-            <frequency>TODO_CONTROL_CHANNEL_HZ</frequency>
+            <frequency>769168750</frequency>
             <!--
-              Pin to the Nooelec RTL-SDR by serial number. This prevents SDRTrunk
-              from accidentally trying to use the RSPdx-R2 (the radio project's dongle)
-              during device enumeration at startup.
+              Pin to the Nooelec RTL-SDR by serial number. Prevents SDRTrunk
+              from grabbing the RSPdx-R2 (the radio project's dongle) during
+              device enumeration at startup.
               Serial confirmed via: rtl_test -t  → SN: 22012952
             -->
             <preferredTunerName>22012952</preferredTunerName>

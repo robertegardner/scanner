@@ -80,12 +80,15 @@ installed copy in `/opt/scanner/`, push via `deploy.sh`. Not symlinked.
 - **One wideband VHF antenna** (discone or dipole kit) for this project. The
   dx-R2's antennas (Shakespeare 5120 + Cat 5 long-wire) are for radio only,
   no sharing.
-- One antenna covers all the jobs because they all fit in ~130-170 MHz:
+- One wideband antenna covers all the jobs, but frequency range is wider
+  than originally assumed:
   - NOAA APT: 137 MHz
   - ACARS: 131.4-131.7 MHz
   - AIS: 161.975 + 162.025 MHz
-  - MOSWIN P25 (Cape County): ~155 MHz region (VHF, not 800 MHz)
   - NOAA WX: 162 MHz (deprioritized — phone alerts handle this)
+  - MOSWIN P25 (Cape County): 769–771 MHz (700 MHz band, NOT VHF)
+  A discone rated 25–1300 MHz covers all of these. A VHF dipole
+  tuned for 140 MHz will NOT receive the 700 MHz MOSWIN signal.
 
 ## Design conventions
 
@@ -178,9 +181,14 @@ This is sketched; actual interface evolves with the first implementation.
 
 ### EMS scanner (default)
 
-**Frequency band:** Cape Girardeau County MOSWIN — VHF, ~155 MHz region.
-Most public safety here uses MOSWIN. Cape County Private Ambulance (CCPA)
-also uses conventional 155.205 MHz simplex (non-trunked).
+**Frequency band:** Cape Girardeau County MOSWIN — **700 MHz, P25 Phase II**.
+NOT VHF as originally assumed. Sites 033/055/060 all operate in the
+769–771 MHz band (standard public safety 700 MHz).
+Control channel: 769.16875 MHz (Site 033 primary). NAC: 0x1C3 (451).
+System ID: 1CE, WACN: BEE00. RadioReference: https://www.radioreference.com/db/sid/6847
+
+Cape County Private Ambulance (CCPA) still uses conventional 155.205 MHz
+simplex (non-trunked).
 
 **Software:** `SDRTrunk` is the modern P25 decoder; `op25` is the historical
 alternative. Both work on Pi 5. SDRTrunk is JVM-based, easier to configure;
