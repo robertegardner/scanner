@@ -1,0 +1,7 @@
+# Allow the scanner user to start/stop/restart scanner services
+scanner ALL=(ALL) NOPASSWD: /bin/systemctl start scanner-scheduler.service
+scanner ALL=(ALL) NOPASSWD: /bin/systemctl stop scanner-scheduler.service
+scanner ALL=(ALL) NOPASSWD: /bin/systemctl restart scanner-scheduler.service
+scanner ALL=(ALL) NOPASSWD: /bin/systemctl start scanner-ui.service
+scanner ALL=(ALL) NOPASSWD: /bin/systemctl stop scanner-ui.service
+scanner ALL=(ALL) NOPASSWD: /bin/systemctl restart scanner-ui.service

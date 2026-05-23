@@ -1,0 +1,26 @@
+[Unit]
+Description=Scanner SDR Scheduler
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=scanner
+Group=scanner
+WorkingDirectory=/opt/scanner
+EnvironmentFile=/etc/scanner/config.env
+ExecStart=/opt/scanner/venv/bin/python scheduler.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scanner-scheduler
+
+# Give the scheduler time to wind down jobs cleanly
+TimeoutStopSec=15
+
+# Prevent OOM killer from hitting the JVM child (SDRTrunk)
+OOMScoreAdjust=-100
+
+[Install]
+WantedBy=multi-user.target

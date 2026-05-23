@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calls — Scanner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; }
+  header { background: #1a1d27; border-bottom: 1px solid #2d3148; padding: 12px 20px;
+           display: flex; align-items: center; gap: 24px; }
+  header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.05em; color: #a5b4fc; }
+  nav a { font-size: 0.85rem; color: #94a3b8; }
+  nav a.active { color: #e2e8f0; }
+  .main { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.08em; color: #64748b; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { text-align: left; padding: 7px 10px; border-bottom: 1px solid #2d3148;
+       color: #475569; font-weight: 500; }
+  td { padding: 7px 10px; border-bottom: 1px solid #1e2235; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  audio { width: 240px; height: 28px; }
+  .empty-state { color: #475569; padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Scanner</h1>
+  <nav>
+    <a href="/">Dashboard</a> &nbsp;
+    <a href="/gallery">Gallery</a> &nbsp;
+    <a href="/calls" class="active">Calls</a>
+  </nav>
+</header>
+
+<div class="main">
+  <h2>EMS Call Log</h2>
+
+  {% if calls and not calls.error %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Time</th>
+        <th>File</th>
+        <th>Size</th>
+        <th>Play</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in calls %}
+      <tr>
+        <td style="color:#475569">{{ c.ts[:10] }}</td>
+        <td style="font-variant-numeric:tabular-nums">{{ c.ts[11:19] }}</td>
+        <td style="color:#94a3b8;word-break:break-all">{{ c.filename }}</td>
+        <td>{{ c.size_kb }} KB</td>
+        <td><audio controls preload="none" src="/recordings/ems/{{ c.path }}"></audio></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">No call recordings yet.</div>
+  {% endif %}
+</div>
+
+</body>
+</html>

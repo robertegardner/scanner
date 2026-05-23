@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gallery — Scanner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; }
+  header { background: #1a1d27; border-bottom: 1px solid #2d3148; padding: 12px 20px;
+           display: flex; align-items: center; gap: 24px; }
+  header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.05em; color: #a5b4fc; }
+  nav a { font-size: 0.85rem; color: #94a3b8; }
+  nav a.active { color: #e2e8f0; }
+  .main { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.08em; color: #64748b; margin-bottom: 12px; }
+  .day-group { margin-bottom: 32px; }
+  .day-label { font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin-bottom: 10px; }
+  .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .image-card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 6px; overflow: hidden; }
+  .image-card img { width: 100%; display: block; cursor: pointer; }
+  .image-card .meta { padding: 8px 10px; font-size: 0.75rem; color: #64748b; }
+  .empty-state { color: #475569; padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Scanner</h1>
+  <nav>
+    <a href="/">Dashboard</a> &nbsp;
+    <a href="/gallery" class="active">Gallery</a> &nbsp;
+    <a href="/calls">Calls</a>
+  </nav>
+</header>
+
+<div class="main">
+  <h2>NOAA APT Images</h2>
+
+  {% if images %}
+    {% set current_date = namespace(val="") %}
+    {% for img in images %}
+      {% if img.date != current_date.val %}
+        {% if not loop.first %}</div></div>{% endif %}
+        <div class="day-group">
+        <div class="day-label">{{ img.date }}</div>
+        <div class="image-grid">
+        {% set current_date.val = img.date %}
+      {% endif %}
+      <div class="image-card">
+        <a href="{{ img.url }}" target="_blank">
+          <img src="{{ img.url }}" alt="{{ img.filename }}" loading="lazy">
+        </a>
+        <div class="meta">{{ img.filename }} &nbsp;·&nbsp; {{ img.size_kb }} KB</div>
+      </div>
+      {% if loop.last %}</div></div>{% endif %}
+    {% endfor %}
+  {% else %}
+    <div class="empty-state">No NOAA images captured yet.<br>
+      Images appear here after the first satellite pass is received.</div>
+  {% endif %}
+</div>
+
+</body>
+</html>

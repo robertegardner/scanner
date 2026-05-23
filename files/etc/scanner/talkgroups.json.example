@@ -1,0 +1,15 @@
+{
+  "_comment": "Cape Girardeau County MOSWIN talkgroups. Copy to talkgroups.json and fill in real TGIDs from radioreference.com.",
+  "system": "Cape Girardeau County MOSWIN",
+  "site": "Cape Girardeau",
+  "talkgroups": [
+    {"tgid": 0, "alias": "Cape CO ALL",        "category": "multiagency", "monitor": true},
+    {"tgid": 0, "alias": "Cape CO Travel",     "category": "multiagency", "monitor": false},
+    {"tgid": 0, "alias": "Cape CO EMS",        "category": "ems",         "monitor": true},
+    {"tgid": 0, "alias": "Cape CO Fire Disp 1","category": "fire",        "monitor": true},
+    {"tgid": 0, "alias": "Cape CO Fire Disp 2","category": "fire",        "monitor": true},
+    {"tgid": 0, "alias": "E Fire 1",           "category": "fire",        "monitor": true},
+    {"tgid": 0, "alias": "CCPA Simplex",       "category": "ems",         "monitor": true,
+     "_note": "Cape County Private Ambulance, 155.205 MHz conventional — not on MOSWIN"}
+  ]
+}

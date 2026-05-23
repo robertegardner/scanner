@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  SDRTrunk playlist — Cape Girardeau County MOSWIN (APCO P25 Phase 1, VHF).
+
+  Fill in the two TODO values from RadioReference before first use:
+    https://www.radioreference.com/db/browse/ctid/1265
+
+  On that page, find the MOSWIN system entry. Open it and look for the
+  Cape Girardeau site. You need:
+
+    1. Control Channel frequency (Hz).
+       Example: if RadioReference shows "154.6250" → enter 154625000
+
+    2. NAC (Network Access Code), shown as a hex value like "0x293".
+       Convert to decimal: 0x293 = 659.  Enter the decimal integer.
+
+  After editing, this file is installed to:
+    /var/lib/scanner/sdrtrunk/playlists/cape-county.xml
+  by bootstrap.sh (only if that file does not already exist).
+
+  If SDRTrunk is not decoding: open its GUI once on a workstation (or with
+  X forwarding), configure the system there, and copy the generated playlist
+  XML back to the Pi. The GUI validates the config on save.
+-->
+<playlist timestamp="2026-05-23T00:00:00.000Z" version="2">
+    <channel enabled="true" autoStart="true" order="0">
+        <name>Cape County MOSWIN</name>
+
+        <decodeConfiguration type="P25_PHASE1">
+            <!-- CQPSK is standard modulation for APCO25 Phase 1 VHF. -->
+            <modulation>CQPSK</modulation>
+            <!-- Skip data/PDU bursts (GPS pings, MDT frames) — voice calls only. -->
+            <ignoreDataCalls>true</ignoreDataCalls>
+            <!--
+              Optional: NAC filter.  If set, only decode traffic matching this NAC.
+              Avoids picking up a neighboring system on the same frequency.
+              TODO: fill in the decimal NAC from RadioReference (e.g. 659 for 0x293).
+              Leave as 0 to disable filtering (accept any NAC).
+            -->
+            <nac>0</nac>
+        </decodeConfiguration>
+
+        <sourceConfiguration type="TUNER">
+            <!--
+              TODO: Replace with the MOSWIN control channel frequency in Hz.
+              RadioReference → Cape Girardeau County → MOSWIN → Cape Girardeau site
+              → Site Frequencies → look for the "CC" (Control Channel) entry.
+              Multiply MHz × 1,000,000 and drop the decimal.
+              Example: 154.6250 MHz → 154625000
+            -->
+            <frequency>TODO_CONTROL_CHANNEL_HZ</frequency>
+            <!--
+              Leave blank to use the first available RTL-SDR tuner (device index 0).
+              To pin to the Nooelec specifically, enter its serial: 22012952
+            -->
+            <preferredTunerName/>
+        </sourceConfiguration>
+
+        <recordConfiguration>
+            <!-- MBE_CALL_SEQUENCE records each decoded voice call as an MP3. -->
+            <recorder type="MBE_CALL_SEQUENCE"/>
+        </recordConfiguration>
+
+    </channel>
+</playlist>

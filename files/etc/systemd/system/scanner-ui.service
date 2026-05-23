@@ -1,0 +1,20 @@
+[Unit]
+Description=Scanner Web UI
+After=network.target scanner-scheduler.service
+Wants=scanner-scheduler.service
+
+[Service]
+Type=simple
+User=scanner
+Group=scanner
+WorkingDirectory=/opt/scanner
+EnvironmentFile=/etc/scanner/config.env
+ExecStart=/opt/scanner/venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scanner-ui
+
+[Install]
+WantedBy=multi-user.target

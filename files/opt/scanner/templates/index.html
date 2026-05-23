@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scanner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+  a { color: #63b3ed; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { background: #1a1d27; border-bottom: 1px solid #2d3148; padding: 12px 20px;
+           display: flex; align-items: center; gap: 24px; }
+  header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.05em; color: #a5b4fc; }
+  nav a { font-size: 0.85rem; color: #94a3b8; }
+  nav a.active { color: #e2e8f0; }
+
+  .main { max-width: 1100px; margin: 0 auto; padding: 20px; display: grid;
+          grid-template-columns: 1fr 320px; gap: 16px; }
+
+  .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 8px; padding: 16px; }
+  .card h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+             letter-spacing: 0.08em; color: #64748b; margin-bottom: 12px; }
+
+  .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.green { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+  .dot.yellow { background: #eab308; box-shadow: 0 0 6px #eab308; }
+  .dot.gray { background: #475569; }
+  .job-name { font-size: 1rem; font-weight: 600; }
+  .job-detail { font-size: 0.8rem; color: #64748b; }
+
+  .queue-item { display: flex; justify-content: space-between; align-items: center;
+                padding: 6px 0; border-bottom: 1px solid #1e2235; font-size: 0.82rem; }
+  .queue-item:last-child { border-bottom: none; }
+  .prio-badge { background: #2d3148; border-radius: 4px; padding: 1px 6px;
+                font-size: 0.7rem; color: #64748b; }
+
+  .activity { font-size: 0.78rem; }
+  .activity-row { display: grid; grid-template-columns: 80px 1fr; gap: 8px;
+                  padding: 5px 0; border-bottom: 1px solid #1e2235; }
+  .activity-row:last-child { border-bottom: none; }
+  .activity-ts { color: #475569; font-variant-numeric: tabular-nums; }
+  .activity-ok { color: #22c55e; }
+  .activity-fail { color: #f87171; }
+
+  .calls-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  .calls-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #2d3148;
+                    color: #475569; font-weight: 500; }
+  .calls-table td { padding: 6px 8px; border-bottom: 1px solid #1e2235; }
+  .calls-table tr:last-child td { border-bottom: none; }
+
+  form label { display: block; font-size: 0.75rem; color: #64748b; margin-bottom: 4px; }
+  form input, form select { width: 100%; background: #0f1117; border: 1px solid #2d3148;
+    border-radius: 4px; color: #e2e8f0; padding: 6px 8px; font-size: 0.85rem; margin-bottom: 10px; }
+  form input:focus, form select:focus { outline: none; border-color: #6366f1; }
+  .btn { display: inline-block; padding: 7px 16px; border-radius: 4px; font-size: 0.85rem;
+         font-weight: 500; cursor: pointer; border: none; transition: opacity .15s; }
+  .btn:hover { opacity: 0.85; }
+  .btn-primary { background: #6366f1; color: white; }
+  .btn-danger { background: #dc2626; color: white; }
+  .btn-sm { padding: 3px 10px; font-size: 0.75rem; }
+
+  #override-status { font-size: 0.78rem; margin-top: 8px; min-height: 1.2em; color: #64748b; }
+
+  .full-width { grid-column: 1 / -1; }
+
+  audio { width: 100%; margin-top: 2px; height: 28px; }
+
+  .empty-state { color: #475569; font-size: 0.82rem; padding: 12px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Scanner</h1>
+  <nav>
+    <a href="/" class="active">Dashboard</a> &nbsp;
+    <a href="/gallery">Gallery</a> &nbsp;
+    <a href="/calls">Calls</a>
+  </nav>
+</header>
+
+<div class="main">
+
+  <!-- Current status -->
+  <div class="card">
+    <h2>Status</h2>
+    <div class="status-row" id="status-current">
+      {% if status.current %}
+        <span class="dot green"></span>
+        <span>
+          <div class="job-name">{{ status.current.name | replace("_", " ") | title }}</div>
+          {% if status.current.detail %}
+            <div class="job-detail">{{ status.current.detail }}</div>
+          {% endif %}
+        </span>
+      {% elif status.error %}
+        <span class="dot yellow"></span>
+        <span class="job-detail">Scheduler unreachable: {{ status.error }}</span>
+      {% else %}
+        <span class="dot gray"></span>
+        <span class="job-detail">Idle</span>
+      {% endif %}
+    </div>
+
+    <h2 style="margin-top:16px">Recent Activity</h2>
+    <div class="activity" id="activity-log">
+      {% if status.recent %}
+        {% for e in status.recent %}
+        <div class="activity-row">
+          <span class="activity-ts">{{ e.ts[11:19] }}</span>
+          <span class="{{ 'activity-ok' if e.success else 'activity-fail' }}">
+            {{ e.job | replace("_", " ") }}
+            {% if e.detail %} — {{ e.detail }}{% endif %}
+          </span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty-state">No activity yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div>
+
+    <!-- Queue -->
+    <div class="card" style="margin-bottom:16px">
+      <h2>Queue</h2>
+      <div id="queue-list">
+        {% if status.queue %}
+          {% for j in status.queue %}
+          <div class="queue-item">
+            <span>{{ j.name | replace("_", " ") | title }}</span>
+            <span class="prio-badge">p{{ j.priority }}</span>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state">Nothing queued.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Manual override -->
+    <div class="card">
+      <h2>Manual Override</h2>
+      <form id="override-form" onsubmit="submitOverride(event)">
+        <label>Frequency</label>
+        <input type="text" name="freq" placeholder="155.205M" required pattern="[\d.]+[kMG]?">
+        <label>Mode</label>
+        <select name="mode">
+          <option value="fm">FM</option>
+          <option value="wbfm">Wide FM</option>
+          <option value="am">AM</option>
+          <option value="usb">USB</option>
+          <option value="lsb">LSB</option>
+        </select>
+        <label>Duration (seconds)</label>
+        <input type="number" name="duration_s" value="120" min="5" max="3600">
+        <button type="submit" class="btn btn-primary" style="width:100%">Listen</button>
+      </form>
+      <div id="override-status"></div>
+      <button class="btn btn-danger btn-sm" style="margin-top:8px;display:none" id="release-btn"
+              onclick="releaseOverride()">Release Override</button>
+    </div>
+
+  </div>
+
+  <!-- Recent calls -->
+  <div class="card full-width">
+    <h2>Recent Calls</h2>
+    <table class="calls-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>File</th>
+          <th>Size</th>
+          <th>Play</th>
+        </tr>
+      </thead>
+      <tbody id="calls-tbody">
+        {% if calls and not calls.error %}
+          {% for c in calls %}
+          <tr>
+            <td>{{ c.ts[11:19] }}<br><span style="color:#475569;font-size:0.7rem">{{ c.ts[:10] }}</span></td>
+            <td style="color:#94a3b8">{{ c.filename }}</td>
+            <td>{{ c.size_kb }} KB</td>
+            <td>
+              <audio controls preload="none" src="/recordings/ems/{{ c.path }}"></audio>
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="4" class="empty-state" style="padding:12px 8px">No call recordings yet.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- .main -->
+
+<script>
+async function submitOverride(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const payload = {
+    freq: fd.get("freq"),
+    mode: fd.get("mode"),
+    duration_s: parseInt(fd.get("duration_s")),
+  };
+  const statusEl = document.getElementById("override-status");
+  const releaseBtn = document.getElementById("release-btn");
+  statusEl.textContent = "Sending…";
+  try {
+    const r = await fetch("/api/override", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (data.error) {
+      statusEl.textContent = "Error: " + data.error;
+    } else {
+      statusEl.textContent = `Queued: ${data.freq} ${data.mode.toUpperCase()} for ${data.duration_s}s`;
+      releaseBtn.style.display = "inline-block";
+    }
+  } catch (err) {
+    statusEl.textContent = "Request failed: " + err;
+  }
+}
+
+async function releaseOverride() {
+  await fetch("/api/release", {method: "POST"});
+  document.getElementById("override-status").textContent = "Override released.";
+  document.getElementById("release-btn").style.display = "none";
+}
+
+// Poll status every 5 seconds and update the page without a full reload.
+async function pollStatus() {
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+
+    // Update current job
+    const el = document.getElementById("status-current");
+    if (s.current) {
+      el.innerHTML = `<span class="dot green"></span>
+        <span>
+          <div class="job-name">${fmtName(s.current.name)}</div>
+          ${s.current.detail ? `<div class="job-detail">${s.current.detail}</div>` : ""}
+        </span>`;
+      document.getElementById("release-btn").style.display =
+        s.current.name === "manual_override" ? "inline-block" : "none";
+    } else {
+      el.innerHTML = `<span class="dot gray"></span><span class="job-detail">Idle</span>`;
+    }
+
+    // Update queue
+    const ql = document.getElementById("queue-list");
+    if (s.queue && s.queue.length > 0) {
+      ql.innerHTML = s.queue.map(j =>
+        `<div class="queue-item"><span>${fmtName(j.name)}</span>
+         <span class="prio-badge">p${j.priority}</span></div>`
+      ).join("");
+    } else {
+      ql.innerHTML = `<div class="empty-state">Nothing queued.</div>`;
+    }
+
+    // Update activity
+    const al = document.getElementById("activity-log");
+    if (s.recent && s.recent.length > 0) {
+      al.innerHTML = s.recent.map(e =>
+        `<div class="activity-row">
+          <span class="activity-ts">${e.ts.slice(11,19)}</span>
+          <span class="${e.success ? "activity-ok" : "activity-fail"}">
+            ${fmtName(e.job)}${e.detail ? " — " + e.detail : ""}
+          </span>
+        </div>`
+      ).join("");
+    }
+  } catch (_) {}
+}
+
+function fmtName(s) {
+  return s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+async function pollCalls() {
+  try {
+    const r = await fetch("/api/calls?limit=20");
+    const calls = await r.json();
+    if (!calls || calls.error) return;
+    const tbody = document.getElementById("calls-tbody");
+    if (!calls.length) {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-state" style="padding:12px 8px">No call recordings yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = calls.map(c => `
+      <tr>
+        <td>${c.ts.slice(11,19)}<br><span style="color:#475569;font-size:0.7rem">${c.ts.slice(0,10)}</span></td>
+        <td style="color:#94a3b8">${escHtml(c.filename)}</td>
+        <td>${c.size_kb} KB</td>
+        <td><audio controls preload="none" src="/recordings/ems/${encodeURIComponent(c.path)}"></audio></td>
+      </tr>`).join("");
+  } catch (_) {}
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+setInterval(pollStatus, 5000);
+setInterval(pollCalls, 30000);
+</script>
+</body>
+</html>

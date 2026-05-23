@@ -25,20 +25,80 @@ This is the current state. Repo exists, docs in place, no code yet.
 
 ## Stage 2 — Standalone EMS scanner
 
-Get a working P25 trunked decoder running as its own systemd service,
-independent of the scheduler infrastructure. This validates the antenna,
-the dongle, and the software stack.
+Get a working P25 trunked decoder running under the scheduler. This
+validates the antenna, the dongle, and the software stack.
 
-**Actions:**
-1. Install SDRTrunk (or op25) on the Pi
-2. Configure for Cape County MOSWIN (talkgroups from radioreference.com)
-3. Test reception: at minimum the MOSWIN control channel should decode
-4. Set up Icecast mount for streamed audio
-5. Wire it as a systemd service with restart on failure
+### 2a — Look up Cape County MOSWIN on RadioReference
 
-**Done when:** you can listen to Cape County dispatch via a browser stream.
+Go to: https://www.radioreference.com/db/browse/ctid/1265
 
-This is genuinely useful on its own as a standalone scanner.
+Find the MOSWIN entry (Missouri Statewide Wireless Interoperable Network,
+P25 Phase 1, VHF). Open the Cape Girardeau site. You need:
+
+- **Control Channel frequency** — labeled "CC" in the site frequencies table.
+  Write it down in Hz (e.g. 154.6250 MHz → `154625000`).
+- **NAC** — Network Access Code, shown as hex (e.g. `0x293` → decimal `659`).
+  This is optional but prevents the scanner from latching onto a neighboring
+  system if the control channel is shared or busy.
+
+### 2b — Fill in the playlist
+
+Edit `/var/lib/scanner/sdrtrunk/playlists/cape-county.xml` (installed by
+bootstrap.sh from the template in `files/etc/scanner/sdrtrunk-playlist.xml.example`):
+
+```bash
+sudo -u scanner nano /var/lib/scanner/sdrtrunk/playlists/cape-county.xml
+```
+
+Replace `TODO_CONTROL_CHANNEL_HZ` with the control channel in Hz.
+Optionally set the `<nac>` element to the decimal NAC value.
+
+### 2c — Test SDRTrunk headless
+
+Run SDRTrunk manually as the scanner user to verify the playlist loads and
+the control channel decodes:
+
+```bash
+sudo -u scanner java -Xmx512m \
+  -jar /opt/scanner/sdrtrunk/sdrtrunk-linux-aarch64-latest.jar \
+  --headless \
+  --home /var/lib/scanner/sdrtrunk
+```
+
+Watch the log output. Within 30–60 seconds you should see:
+- `P25 Phase 1 Control Channel ... decoded` — the system is decoded
+- Talkgroup activity lines — traffic is being received
+
+If it starts but logs nothing about P25: the frequency is wrong, or the
+antenna isn't picking up signal. Try scanning ±50 kHz around the expected
+control channel frequency.
+
+If SDRTrunk crashes on startup: the Java heap may be too small. Try `-Xmx768m`.
+
+### 2d — Verify recordings
+
+After a voice call is received, a recording appears under:
+```
+/var/lib/scanner/sdrtrunk/recordings/
+```
+
+Play one to confirm it decoded correctly:
+```bash
+aplay -r 8000 /var/lib/scanner/sdrtrunk/recordings/*/*.mp3 2>/dev/null || \
+  mpg123 /var/lib/scanner/sdrtrunk/recordings/*/*.mp3
+```
+
+### 2e — Start the scheduler
+
+```bash
+sudo systemctl start scanner-scheduler scanner-ui
+sudo journalctl -u scanner-scheduler -f
+```
+
+The dashboard is at `http://<pi-ip>:8081/`.
+
+**Done when:** you see P25 control channel decoding in the logs and at least
+one EMS call recording on disk.
 
 ## Stage 3 — Standalone NOAA APT
 
