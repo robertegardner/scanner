@@ -40,7 +40,7 @@ log = logging.getLogger("scheduler")
 @dataclass
 class Config:
     scheduler_port: int
-    sdrtrunk_jar: str
+    sdrtrunk_bin: str
     sdrtrunk_home: str
     ems_recordings_dir: str
     noaa_data_dir: str
@@ -51,7 +51,7 @@ class Config:
     def from_env(cls) -> "Config":
         return cls(
             scheduler_port=int(os.environ.get("SCHEDULER_PORT", "8082")),
-            sdrtrunk_jar=os.environ["SDRTRUNK_JAR"],
+            sdrtrunk_bin=os.environ["SDRTRUNK_BIN"],
             sdrtrunk_home=os.environ.get("SDRTRUNK_HOME", "/var/lib/scanner/sdrtrunk"),
             ems_recordings_dir=os.environ.get("EMS_RECORDINGS_DIR", "/var/lib/scanner/ems/recordings"),
             noaa_data_dir=os.environ.get("NOAA_DATA_DIR", "/var/lib/scanner/noaa"),

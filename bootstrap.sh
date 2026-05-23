@@ -80,21 +80,22 @@ python3 -m venv /opt/scanner/venv
 # ---------------------------------------------------------------------------
 SDRTRUNK_DIR=/opt/scanner/sdrtrunk
 SDRTRUNK_VERSION="0.6.1"
-SDRTRUNK_JAR="$SDRTRUNK_DIR/sdrtrunk-linux-aarch64-v${SDRTRUNK_VERSION}.jar"
+SDRTRUNK_INSTALL="$SDRTRUNK_DIR/sdr-trunk-linux-aarch64-v${SDRTRUNK_VERSION}"
+SDRTRUNK_BIN="$SDRTRUNK_INSTALL/bin/sdr-trunk"
 
-if [[ ! -f "$SDRTRUNK_JAR" ]]; then
+if [[ ! -f "$SDRTRUNK_BIN" ]]; then
   log "Downloading SDRTrunk v${SDRTRUNK_VERSION}"
   install -d -o scanner -g scanner "$SDRTRUNK_DIR"
   SDRTRUNK_URL="https://github.com/DSheirer/sdrtrunk/releases/download/v${SDRTRUNK_VERSION}/sdr-trunk-linux-aarch64-v${SDRTRUNK_VERSION}.zip"
   TMP=$(mktemp -d)
   curl -L --progress-bar "$SDRTRUNK_URL" -o "$TMP/sdrtrunk.zip"
-  unzip -q "$TMP/sdrtrunk.zip" -d "$TMP/sdrtrunk"
-  find "$TMP/sdrtrunk" -name "*.jar" -exec cp {} "$SDRTRUNK_JAR" \;
+  unzip -q "$TMP/sdrtrunk.zip" -d "$SDRTRUNK_DIR"
   rm -rf "$TMP"
-  chown scanner:scanner "$SDRTRUNK_JAR"
-  # Symlink for config.env.example reference
-  ln -sf "$SDRTRUNK_JAR" "$SDRTRUNK_DIR/sdrtrunk-linux-aarch64-latest.jar"
-  log "SDRTrunk installed at $SDRTRUNK_JAR"
+  chown -R scanner:scanner "$SDRTRUNK_INSTALL"
+  chmod +x "$SDRTRUNK_BIN"
+  # Stable symlink so config.env doesn't need updating on version bumps
+  ln -sf "$SDRTRUNK_BIN" "$SDRTRUNK_DIR/sdr-trunk-latest"
+  log "SDRTrunk installed at $SDRTRUNK_BIN"
 else
   log "SDRTrunk already installed — skipping"
 fi
@@ -105,9 +106,6 @@ fi
 if [[ ! -f /etc/scanner/config.env ]]; then
   log "Installing config.env.example → /etc/scanner/config.env"
   cp "$REPO/files/etc/scanner/config.env.example" /etc/scanner/config.env
-  # Patch the jar path to match what we installed
-  sed -i "s|sdrtrunk-linux-aarch64-latest.jar|sdrtrunk-linux-aarch64-v${SDRTRUNK_VERSION}.jar|" \
-    /etc/scanner/config.env
   chmod 640 /etc/scanner/config.env
   chown root:scanner /etc/scanner/config.env
   log "Edit /etc/scanner/config.env before starting services"

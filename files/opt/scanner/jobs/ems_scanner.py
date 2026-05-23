@@ -36,6 +36,9 @@ class EMSJob(Job):
         cmd = self._build_command()
         log.info("Starting SDRTrunk: %s", " ".join(cmd))
 
+        env = os.environ.copy()
+        env["SDR_TRUNK_OPTS"] = "-Xmx512m"
+
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -43,6 +46,7 @@ class EMSJob(Job):
                 stderr=subprocess.STDOUT,
                 text=True,
                 preexec_fn=os.setsid,
+                env=env,
             )
         except FileNotFoundError as e:
             return JobResult(success=False, log=f"SDRTrunk not found: {e}")
@@ -105,9 +109,7 @@ class EMSJob(Job):
 
     def _build_command(self) -> list[str]:
         return [
-            "java",
-            "-Xmx512m",
-            "-jar", self._config.sdrtrunk_jar,
+            self._config.sdrtrunk_bin,
             "--headless",
             "--home", self._config.sdrtrunk_home,
         ]
