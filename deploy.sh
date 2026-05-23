@@ -16,6 +16,7 @@ rsync -a --delete \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
   --exclude 'venv' \
+  --exclude 'sdrtrunk' \
   "$SRC/" "$DEST/"
 
 chown -R scanner:scanner "$DEST"

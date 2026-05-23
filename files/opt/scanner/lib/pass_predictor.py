@@ -19,7 +19,9 @@ _SATELLITES = {
     "NOAA 19": 137.100,
 }
 
-_TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle"
+# NOAA 15 = 25338, NOAA 18 = 28654, NOAA 19 = 33591
+_TLE_BASE = "https://celestrak.org/NORAD/elements/gp.php?FORMAT=tle&CATNR="
+_TLE_CATNRS = {"NOAA 15": "25338", "NOAA 18": "28654", "NOAA 19": "33591"}
 _TLE_PATH = Path("/var/lib/scanner/noaa/weather.tle")
 _MIN_ELEVATION = 20.0   # degrees — passes below this are too weak to bother
 _TLE_MAX_AGE_S = 86400  # refresh TLEs once per day
@@ -37,10 +39,13 @@ class Pass:
 def update_tles() -> None:
     """Download fresh TLEs from Celestrak. Atomic write."""
     _TLE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    resp = requests.get(_TLE_URL, timeout=30)
-    resp.raise_for_status()
+    lines: list[str] = []
+    for sat, catnr in _TLE_CATNRS.items():
+        resp = requests.get(_TLE_BASE + catnr, timeout=30)
+        resp.raise_for_status()
+        lines.append(resp.text.strip())
     tmp = _TLE_PATH.with_suffix(".tmp")
-    tmp.write_bytes(resp.content)
+    tmp.write_text("\n".join(lines) + "\n")
     tmp.replace(_TLE_PATH)
     log.info("TLEs updated: %s (%d bytes)", _TLE_PATH, _TLE_PATH.stat().st_size)
 
@@ -70,13 +75,15 @@ def upcoming_passes(hours_ahead: float = 24.0) -> list[Pass]:
         try:
             orb = Orbital(sat_name, tle_file=str(_TLE_PATH))
             # pyorbital: get_next_passes(utc_time, length_h, lon, lat, alt_km)
-            raw = orb.get_next_passes(now, hours_ahead, _LON, _LAT, _ALT)
+            raw = orb.get_next_passes(now, int(hours_ahead), _LON, _LAT, _ALT)
         except Exception as e:
             log.warning("Pass prediction failed for %s: %s", sat_name, e)
             continue
 
-        for aos, los, max_el in raw:
-            if max_el < _MIN_ELEVATION:
+        # pyorbital returns (rise_time, fall_time, max_elevation_time)
+        for aos, los, max_el_time in raw:
+            _, el_deg = orb.get_observer_look(max_el_time, _LON, _LAT, _ALT)
+            if el_deg < _MIN_ELEVATION:
                 continue
             # pyorbital returns naive UTC datetimes
             if aos.tzinfo is None:
@@ -88,7 +95,7 @@ def upcoming_passes(hours_ahead: float = 24.0) -> list[Pass]:
                 freq_mhz=freq_mhz,
                 aos=aos,
                 los=los,
-                max_el=round(max_el, 1),
+                max_el=round(float(el_deg), 1),
             ))
 
     passes.sort(key=lambda p: p.aos)
