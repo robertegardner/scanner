@@ -79,13 +79,13 @@ python3 -m venv /opt/scanner/venv
 # 5. SDRTrunk
 # ---------------------------------------------------------------------------
 SDRTRUNK_DIR=/opt/scanner/sdrtrunk
-SDRTRUNK_VERSION="0.6.3"
+SDRTRUNK_VERSION="0.6.1"
 SDRTRUNK_JAR="$SDRTRUNK_DIR/sdrtrunk-linux-aarch64-v${SDRTRUNK_VERSION}.jar"
 
 if [[ ! -f "$SDRTRUNK_JAR" ]]; then
   log "Downloading SDRTrunk v${SDRTRUNK_VERSION}"
   install -d -o scanner -g scanner "$SDRTRUNK_DIR"
-  SDRTRUNK_URL="https://github.com/DSheirer/sdrtrunk/releases/download/v${SDRTRUNK_VERSION}/sdrtrunk-linux-aarch64-v${SDRTRUNK_VERSION}.zip"
+  SDRTRUNK_URL="https://github.com/DSheirer/sdrtrunk/releases/download/v${SDRTRUNK_VERSION}/sdr-trunk-linux-aarch64-v${SDRTRUNK_VERSION}.zip"
   TMP=$(mktemp -d)
   curl -L --progress-bar "$SDRTRUNK_URL" -o "$TMP/sdrtrunk.zip"
   unzip -q "$TMP/sdrtrunk.zip" -d "$TMP/sdrtrunk"
