@@ -54,7 +54,7 @@ class Config:
         return cls(
             scheduler_port=int(os.environ.get("SCHEDULER_PORT", "8082")),
             sdrtrunk_bin=os.environ["SDRTRUNK_BIN"],
-            sdrtrunk_home=os.environ.get("SDRTRUNK_HOME", "/var/lib/scanner/sdrtrunk"),
+            sdrtrunk_home=os.environ.get("SDRTRUNK_HOME", "/var/lib/scanner/SDRTrunk"),
             ems_recordings_dir=os.environ.get("EMS_RECORDINGS_DIR", "/var/lib/scanner/ems/recordings"),
             noaa_data_dir=os.environ.get("NOAA_DATA_DIR", "/var/lib/scanner/noaa"),
             manual_recordings_dir=os.environ.get("MANUAL_RECORDINGS_DIR", "/var/lib/scanner/manual"),

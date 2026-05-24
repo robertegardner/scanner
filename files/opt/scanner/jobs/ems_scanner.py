@@ -111,5 +111,4 @@ class EMSJob(Job):
         return [
             self._config.sdrtrunk_bin,
             "--headless",
-            "--home", self._config.sdrtrunk_home,
         ]

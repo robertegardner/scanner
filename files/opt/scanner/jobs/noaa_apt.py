@@ -10,6 +10,14 @@ from jobs import Job, JobResult
 
 log = logging.getLogger(__name__)
 
+# rtl_fm startup banner and any gain/rate messages go to stderr — capture them
+# so problems are visible in journald rather than silently swallowed.
+def _drain_stderr(proc: subprocess.Popen) -> None:
+    for line in proc.stderr:
+        line = line.rstrip()
+        if line:
+            log.debug("rtl_fm: %s", line)
+
 
 class NOAAJob(Job):
     name = "noaa_apt"
@@ -47,9 +55,10 @@ class NOAAJob(Job):
             "-d", str(self._config.sdr_device_index),
             "-f", str(freq_hz),
             "-M", "fm",
-            "-s", "60000",
-            "-r", "11025",
-            "-g", "49.6",   # near-max gain — satellite signal is weak
+            "-s", "240000",  # RTL-SDR minimum; gives ±120 kHz bandwidth, enough for APT's 34 kHz
+            "-r", "11025",   # noaa-apt expects 11025 Hz
+            "-E", "dc",      # DC offset removal
+            "-g", "49.6",    # near-max gain — satellite signal is weak
             "-",
         ]
         sox_cmd = [
@@ -63,10 +72,15 @@ class NOAAJob(Job):
 
         try:
             rtl = subprocess.Popen(rtl_cmd, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL)
+                                   stderr=subprocess.PIPE, text=True)
             sox = subprocess.Popen(sox_cmd, stdin=rtl.stdout,
                                    stderr=subprocess.DEVNULL)
             rtl.stdout.close()
+
+            stderr_reader = threading.Thread(
+                target=_drain_stderr, args=(rtl,), daemon=True
+            )
+            stderr_reader.start()
 
             deadline = time.monotonic() + self.duration_s
             while time.monotonic() < deadline:
@@ -82,6 +96,7 @@ class NOAAJob(Job):
             except subprocess.TimeoutExpired:
                 rtl.kill()
                 sox.kill()
+            stderr_reader.join(timeout=3)
 
         except FileNotFoundError as e:
             return JobResult(success=False, log=f"rtl_fm/sox not found: {e}")
@@ -89,8 +104,10 @@ class NOAAJob(Job):
         if not wav_path.exists() or wav_path.stat().st_size < 1024:
             return JobResult(success=False, log="No audio captured")
 
-        # Decode WAV → PNG
-        log.info("Decoding %s → %s", wav_path.name, img_path.name)
+        wav_mb = wav_path.stat().st_size / 1e6
+        log.info("WAV captured: %.1f MB — decoding %s → %s",
+                 wav_mb, wav_path.name, img_path.name)
+
         try:
             result = subprocess.run(
                 ["noaa-apt", str(wav_path), "-o", str(img_path)],
@@ -110,7 +127,14 @@ class NOAAJob(Job):
                 log=f"noaa-apt rc={result.returncode}: {result.stderr[:300]}",
             )
 
-        wav_path.unlink(missing_ok=True)
+        if result.stderr:
+            log.info("noaa-apt: %s", result.stderr.strip()[:200])
+
+        # Keep WAV alongside the image so it can be re-decoded if needed.
+        # Move from raw/ to the dated image directory.
+        wav_keep = img_dir / wav_path.name
+        wav_path.rename(wav_keep)
+
         return JobResult(
             success=True,
             log=f"{self.satellite} → {img_path.name}",
