@@ -78,10 +78,19 @@ class EMSJob(Job):
                     return JobResult(success=True, log="SDRTrunk exited cleanly")
                 return JobResult(success=False, log=f"SDRTrunk exited rc={rc}\n{msg}")
 
+    _INTERESTING = ("BROADCAST", "ICECAST", "STREAM", "CALL ", "PLAYLIST", "CHANNEL", "ALIAS", "TUNER")
+
     def _read_output(self, proc: subprocess.Popen, lines: list[str]) -> None:
         for line in proc.stdout:
             line = line.rstrip()
+            if not line:
+                continue
             lines.append(line)
+            upper = line.upper()
+            if "] ERROR " in line or "] WARN " in line:
+                log.warning("SDRTrunk: %s", line)
+            elif any(k in upper for k in self._INTERESTING):
+                log.info("SDRTrunk: %s", line)
             self._parse_sdrtrunk_line(line)
             if len(lines) > 500:
                 lines[:] = lines[-500:]

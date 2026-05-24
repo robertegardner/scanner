@@ -1,6 +1,5 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <!--
-  SDRTrunk playlist — Cape Girardeau County MOSWIN (APCO P25 Phase II, 700 MHz).
+  SDRTrunk v4 playlist — Cape Girardeau County MOSWIN (APCO P25 Phase 1, 700 MHz).
 
   RadioReference source: https://www.radioreference.com/db/sid/6847
   System: Missouri Statewide Wireless Interoperable Network (MOSWIN)
@@ -14,49 +13,33 @@
   Antenna note: 700 MHz requires a wideband antenna (discone rated 25-1300 MHz).
   A VHF dipole tuned for 140 MHz will NOT receive this band.
 
-  This file is installed to:
-    /var/lib/scanner/sdrtrunk/playlists/cape-county.xml
-  by bootstrap.sh (only if that file does not already exist).
+  Format notes:
+  - Must be version="4". SDRTrunk's PlaylistUpdater migrates v2→v4 and destroys
+    P25 channel config in the process. Always use v4 directly.
+  - NAC is auto-discovered from the control channel; no NAC filter needed in v4.
+  - preferred_tuner is not set here; the RSPdxR2 is disabled via
+    tuner_configuration.json so SDRTrunk automatically picks the RTL-2832.
+  - Replace CHANGE_ME with your Icecast source password before first install.
+
+  Installed to /var/lib/scanner/SDRTrunk/playlist/default.xml by deploy.sh
+  (only if that file does not already exist).
 -->
-<playlist timestamp="2026-05-23T00:00:00.000Z" version="2">
-    <channel enabled="true" autoStart="true" order="0">
-        <name>Cape County MOSWIN</name>
-
-        <decodeConfiguration type="P25_PHASE1">
-            <!--
-              Control channel modulation is C4FM/CQPSK (Phase 1 FSK) even on Phase II
-              sites — SDRTrunk auto-detects TDMA voice from the control channel messages.
-            -->
-            <modulation>CQPSK</modulation>
-            <!-- Skip data/PDU bursts (GPS pings, MDT frames) — voice calls only. -->
-            <ignoreDataCalls>true</ignoreDataCalls>
-            <!--
-              NAC filter: only decode traffic matching MOSWIN's NAC 0x1C3 (= 451).
-              Prevents latching onto adjacent systems on nearby frequencies.
-            -->
-            <nac>451</nac>
-        </decodeConfiguration>
-
-        <sourceConfiguration type="TUNER">
-            <!--
-              Site 033 (Cape Girardeau 700) primary control channel.
-              769.16875 MHz × 1,000,000 = 769168750 Hz
-              Alternate: 769418750 (secondary CC on same site)
-            -->
-            <frequency>769168750</frequency>
-            <!--
-              Pin to the Nooelec RTL-SDR by serial number. Prevents SDRTrunk
-              from grabbing the RSPdx-R2 (the radio project's dongle) during
-              device enumeration at startup.
-              Serial confirmed via: rtl_test -t  → SN: 22012952
-            -->
-            <preferredTunerName>22012952</preferredTunerName>
-        </sourceConfiguration>
-
-        <recordConfiguration>
-            <!-- MBE_CALL_SEQUENCE records each decoded voice call as an MP3. -->
-            <recorder type="MBE_CALL_SEQUENCE"/>
-        </recordConfiguration>
-
-    </channel>
+<playlist version="4">
+  <alias color="-16711936" group="" name="Cape County All" list="MOSWIN">
+    <id type="talkgroupRange" protocol="APCO25" min="0" max="65535"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+  </alias>
+  <channel name="Cape County MOSWIN" enabled="true" order="0">
+    <alias_list_name>MOSWIN</alias_list_name>
+    <event_log_configuration/>
+    <source_configuration type="sourceConfigTuner" frequency="769168750" source_type="TUNER"/>
+    <aux_decode_configuration/>
+    <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK" traffic_channel_pool_size="10" ignore_data_calls="true"/>
+    <record_configuration>
+      <recorder>TRAFFIC_MBE_CALL_SEQUENCE</recorder>
+    </record_configuration>
+  </channel>
+  <stream type="icecastHTTPConfiguration" xmlns:wstxns1="http://www.w3.org/2001/XMLSchema-instance" wstxns1:type="ICECAST_HTTP" public="false" sample_rate="8000" user_name="source" bitrate="32" channels="1" mount_point="/ems.mp3" inline="false" delay="0" host="localhost" name="MOSWIN Live" enabled="true" port="8000" password="CHANGE_ME" maximum_recording_age="0">
+    <format>MP3</format>
+  </stream>
 </playlist>

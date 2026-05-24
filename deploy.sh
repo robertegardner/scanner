@@ -22,13 +22,16 @@ rsync -a --delete \
 
 chown -R scanner:scanner "$DEST"
 
-echo "→ Installing SDRTrunk playlist"
+echo "→ Installing SDRTrunk playlist (first-time only)"
 SDRTRUNK_HOME="/var/lib/scanner/SDRTrunk"
 PLAYLIST_DIR="$SDRTRUNK_HOME/playlist"
 PLAYLIST_SRC="$REPO/files/etc/scanner/sdrtrunk-playlist.xml.example"
 install -d -o scanner -g scanner "$PLAYLIST_DIR"
-if [[ -f "$PLAYLIST_SRC" ]]; then
+if [[ -f "$PLAYLIST_SRC" ]] && [[ ! -f "$PLAYLIST_DIR/default.xml" ]]; then
   install -o scanner -g scanner -m 644 "$PLAYLIST_SRC" "$PLAYLIST_DIR/default.xml"
+  echo "  Installed default playlist — remember to update the Icecast password in $PLAYLIST_DIR/default.xml"
+elif [[ -f "$PLAYLIST_DIR/default.xml" ]]; then
+  echo "  Playlist already exists — not overwriting (edit $PLAYLIST_DIR/default.xml directly)"
 fi
 
 echo "→ Disabling RSPdxR2 in SDRTrunk tuner config"
@@ -41,6 +44,11 @@ if not os.path.exists(path):
 with open(path) as f:
     config = json.load(f)
 disabled = config.setdefault("disabledTuners", [])
+# Remove null-id entries — SDRTrunk can create these on first run and they cause an NPE
+before = len(disabled)
+disabled[:] = [e for e in disabled if e.get("id") is not None]
+if len(disabled) < before:
+    print(f"  Removed {before - len(disabled)} null-id disabled tuner entries")
 entry = {"tunerClass": "RSP", "id": "RSPdxR2 SER#24051FAF70"}
 if entry not in disabled:
     disabled.append(entry)
