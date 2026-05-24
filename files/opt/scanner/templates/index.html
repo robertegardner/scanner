@@ -69,6 +69,13 @@
   audio { width: 100%; margin-top: 2px; height: 28px; }
 
   .empty-state { color: #475569; font-size: 0.82rem; padding: 12px 0; }
+
+  .stream-player { display: flex; flex-direction: column; gap: 8px; }
+  .stream-url { font-size: 0.72rem; color: #475569; word-break: break-all; margin-top: 4px; }
+  .stream-badge { display: inline-flex; align-items: center; gap: 6px;
+                  font-size: 0.78rem; padding: 3px 8px; border-radius: 4px; }
+  .stream-badge.live { background: #14532d; color: #4ade80; }
+  .stream-badge.idle { background: #1e2235; color: #475569; }
 </style>
 </head>
 <body>
@@ -125,6 +132,21 @@
 
   <!-- Sidebar -->
   <div>
+
+    <!-- Live audio -->
+    {% if stream_url %}
+    <div class="card" style="margin-bottom:16px">
+      <h2>Live Audio</h2>
+      <div class="stream-player">
+        <div id="stream-badge" class="stream-badge idle">
+          <span class="dot gray" id="stream-dot"></span>
+          <span id="stream-label">EMS offline</span>
+        </div>
+        <audio id="live-audio" controls preload="none" src="{{ stream_url }}"></audio>
+        <div class="stream-url">{{ stream_url }}</div>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- Queue -->
     <div class="card" style="margin-bottom:16px">
@@ -237,6 +259,26 @@ async function releaseOverride() {
   document.getElementById("release-btn").style.display = "none";
 }
 
+async function pollStream() {
+  try {
+    const r = await fetch("/api/stream");
+    const s = await r.json();
+    const badge = document.getElementById("stream-badge");
+    const dot   = document.getElementById("stream-dot");
+    const label = document.getElementById("stream-label");
+    if (!badge) return;
+    if (s.active) {
+      badge.className = "stream-badge live";
+      dot.className   = "dot green";
+      label.textContent = s.talkgroup ? s.talkgroup : "EMS live";
+    } else {
+      badge.className = "stream-badge idle";
+      dot.className   = "dot gray";
+      label.textContent = "EMS offline";
+    }
+  } catch (_) {}
+}
+
 // Poll status every 5 seconds and update the page without a full reload.
 async function pollStatus() {
   try {
@@ -313,6 +355,8 @@ function escHtml(s) {
 
 setInterval(pollStatus, 5000);
 setInterval(pollCalls, 30000);
+setInterval(pollStream, 5000);
+pollStream();
 </script>
 </body>
 </html>

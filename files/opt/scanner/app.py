@@ -16,6 +16,7 @@ SCHEDULER_URL = f"http://127.0.0.1:{os.environ.get('SCHEDULER_PORT', '8082')}"
 EMS_RECORDINGS_DIR = Path(os.environ.get("EMS_RECORDINGS_DIR", "/var/lib/scanner/ems/recordings"))
 MANUAL_RECORDINGS_DIR = Path(os.environ.get("MANUAL_RECORDINGS_DIR", "/var/lib/scanner/manual"))
 NOAA_DATA_DIR = Path(os.environ.get("NOAA_DATA_DIR", "/var/lib/scanner/noaa"))
+ICECAST_STREAM_URL = os.environ.get("ICECAST_STREAM_URL", "")
 
 
 def _sched(path: str, method: str = "GET", json: dict | None = None) -> dict | list:
@@ -35,7 +36,8 @@ def _sched(path: str, method: str = "GET", json: dict | None = None) -> dict | l
 def index():
     status = _sched("/status")
     calls = _sched("/calls?limit=20")
-    return render_template("index.html", status=status, calls=calls)
+    return render_template("index.html", status=status, calls=calls,
+                           stream_url=ICECAST_STREAM_URL)
 
 
 @app.route("/gallery")
@@ -92,6 +94,18 @@ def api_calls():
 @app.route("/api/passes")
 def api_passes():
     return jsonify(_sched("/passes"))
+
+
+@app.route("/api/stream")
+def api_stream():
+    status = _sched("/status")
+    current = status.get("current") if isinstance(status, dict) else None
+    ems_active = current is not None and current.get("name") == "ems_scanner"
+    return jsonify({
+        "url": ICECAST_STREAM_URL,
+        "active": ems_active,
+        "talkgroup": current.get("detail") if ems_active and current else None,
+    })
 
 
 # ---------------------------------------------------------------------------
