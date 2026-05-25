@@ -10,13 +10,11 @@ from jobs import Job, JobResult
 
 log = logging.getLogger(__name__)
 
-# rtl_fm startup banner and any gain/rate messages go to stderr — capture them
-# so problems are visible in journald rather than silently swallowed.
 def _drain_stderr(proc: subprocess.Popen) -> None:
     for line in proc.stderr:
         line = line.rstrip()
         if line:
-            log.debug("rtl_fm: %s", line)
+            log.info("rtl_fm: %s", line)
 
 
 class NOAAJob(Job):
@@ -124,11 +122,12 @@ class NOAAJob(Job):
         if result.returncode != 0:
             return JobResult(
                 success=False,
-                log=f"noaa-apt rc={result.returncode}: {result.stderr[:300]}",
+                log=f"noaa-apt rc={result.returncode}: {result.stderr[:500]}",
             )
 
-        if result.stderr:
-            log.info("noaa-apt: %s", result.stderr.strip()[:200])
+        for line in (result.stderr + result.stdout).splitlines():
+            if line.strip():
+                log.info("noaa-apt: %s", line)
 
         # Keep WAV alongside the image so it can be re-decoded if needed.
         # Move from raw/ to the dated image directory.
