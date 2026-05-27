@@ -16,18 +16,32 @@
   nav a { font-size: 0.85rem; color: #94a3b8; }
   nav a.active { color: #e2e8f0; }
 
+  .rec-banner {
+    background: #7f1d1d; color: #fecaca; padding: 8px 20px;
+    font-size: 0.82rem; display: none; align-items: center; gap: 10px;
+    border-bottom: 1px solid #991b1b;
+  }
+  .rec-banner.show { display: flex; }
+  .rec-banner .pulse {
+    width: 10px; height: 10px; border-radius: 50%; background: #f87171;
+    box-shadow: 0 0 10px #ef4444; animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
   .main { max-width: 1100px; margin: 0 auto; padding: 20px; display: grid;
           grid-template-columns: 1fr 320px; gap: 16px; }
 
   .card { background: #1a1d27; border: 1px solid #2d3148; border-radius: 8px; padding: 16px; }
   .card h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
              letter-spacing: 0.08em; color: #64748b; margin-bottom: 12px; }
+  .card .sub { font-size: 0.7rem; color: #475569; margin-top: -8px; margin-bottom: 10px; }
 
   .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .dot.green { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
   .dot.yellow { background: #eab308; box-shadow: 0 0 6px #eab308; }
-  .dot.gray { background: #475569; }
+  .dot.red    { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+  .dot.gray   { background: #475569; }
   .job-name { font-size: 1rem; font-weight: 600; }
   .job-detail { font-size: 0.8rem; color: #64748b; }
 
@@ -58,8 +72,34 @@
   .btn { display: inline-block; padding: 7px 16px; border-radius: 4px; font-size: 0.85rem;
          font-weight: 500; cursor: pointer; border: none; transition: opacity .15s; }
   .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-primary { background: #6366f1; color: white; }
   .btn-danger { background: #dc2626; color: white; }
+  .control-row { display: flex; gap: 8px; }
+  .control-row > button { flex: 1; }
+  .btn-record { background: #b91c1c; color: white; padding: 12px;
+                font-weight: 600; letter-spacing: 0.04em; display: flex;
+                align-items: center; justify-content: center; gap: 8px;
+                border-radius: 4px; border: none; cursor: pointer;
+                transition: background .12s; }
+  .btn-record:hover { background: #991b1b; }
+  .btn-record.recording { background: #1f2937; }
+  .btn-record.recording:hover { background: #111827; }
+  .btn-record .rec-dot { width: 10px; height: 10px; border-radius: 50%;
+                         background: currentColor; }
+  .btn-record.recording .rec-dot { background: #ef4444;
+                                   animation: pulse 1.2s ease-in-out infinite; }
+  .btn-squelch { background: #1f2937; color: #94a3b8; padding: 12px;
+                 font-weight: 600; letter-spacing: 0.04em; display: flex;
+                 align-items: center; justify-content: center; gap: 8px;
+                 border-radius: 4px; border: 1px solid #2d3148; cursor: pointer;
+                 transition: all .12s; }
+  .btn-squelch:hover { background: #2d3148; }
+  .btn-squelch.on { background: #14532d; color: #4ade80; border-color: #166534; }
+  .btn-squelch.on:hover { background: #166534; }
+  .btn-squelch .sq-dot { width: 10px; height: 10px; border-radius: 50%;
+                         background: currentColor; }
+  .btn-squelch:disabled { opacity: 0.5; cursor: wait; }
   .btn-sm { padding: 3px 10px; font-size: 0.75rem; }
 
   #override-status { font-size: 0.78rem; margin-top: 8px; min-height: 1.2em; color: #64748b; }
@@ -76,6 +116,42 @@
                   font-size: 0.78rem; padding: 3px 8px; border-radius: 4px; }
   .stream-badge.live { background: #14532d; color: #4ade80; }
   .stream-badge.idle { background: #1e2235; color: #475569; }
+
+  /* Presets */
+  .preset-group { margin-bottom: 14px; }
+  .preset-group:last-child { margin-bottom: 0; }
+  .preset-group-label {
+    font-size: 0.68rem; color: #64748b; text-transform: uppercase;
+    letter-spacing: 0.12em; margin-bottom: 8px; display: flex;
+    align-items: center; justify-content: space-between;
+  }
+  .preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+                 gap: 6px; }
+  .preset-btn {
+    background: #232636; border: 1px solid #2d3148; border-radius: 6px;
+    padding: 8px 10px; text-align: left; cursor: pointer;
+    color: #e2e8f0; transition: all .12s; font-size: 0.82rem;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .preset-btn:hover:not(:disabled) { background: #2d3148; border-color: #6366f1; }
+  .preset-btn.active { background: #312e81; border-color: #a5b4fc; }
+  .preset-btn:disabled { opacity: 0.45; cursor: not-allowed; background: #16181f; }
+  .preset-btn .freq {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-weight: 600; color: #fbbf24; font-size: 0.85rem;
+  }
+  .preset-btn .label { font-size: 0.75rem; color: #cbd5e1; }
+  .preset-btn .sublabel { font-size: 0.68rem; color: #64748b; }
+  .preset-btn .mode-tag {
+    display: inline-block; font-size: 0.6rem; padding: 0 5px;
+    background: #1e293b; color: #94a3b8; border-radius: 3px;
+    margin-left: 6px; vertical-align: middle;
+  }
+
+  .rec-status { display: flex; align-items: center; gap: 10px;
+                margin-top: 10px; font-size: 0.78rem; color: #94a3b8;
+                font-variant-numeric: tabular-nums; }
+  .rec-status .filename { color: #64748b; font-size: 0.72rem; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -85,9 +161,18 @@
   <nav>
     <a href="/" class="active">Dashboard</a> &nbsp;
     <a href="/gallery">Gallery</a> &nbsp;
-    <a href="/calls">Calls</a>
+    <a href="/calls">Calls</a> &nbsp;
+    <a href="/recordings">Recordings</a> &nbsp;
+    <a href="/monitor">Monitor</a>
   </nav>
 </header>
+
+<div class="rec-banner" id="rec-banner">
+  <span class="pulse"></span>
+  <span>Recording: <strong id="rec-banner-name">—</strong></span>
+  <span>·</span>
+  <span id="rec-banner-elapsed">0:00</span>
+</div>
 
 <div class="main">
 
@@ -133,10 +218,42 @@
   <!-- Sidebar -->
   <div>
 
-    <!-- Live audio -->
+    <!-- Monitor stream (filtered live audio from preset tune) -->
+    {% if monitor_stream_url %}
+    <div class="card" style="margin-bottom:16px">
+      <h2>Monitor Stream</h2>
+      <div class="sub">Tune a preset below, then press play.</div>
+      <div class="stream-player">
+        <div id="monitor-badge" class="stream-badge idle">
+          <span class="dot gray" id="monitor-dot"></span>
+          <span id="monitor-label">Idle</span>
+        </div>
+        <audio id="monitor-audio" controls preload="none" src="{{ monitor_stream_url }}"></audio>
+        <div class="control-row">
+          <button class="btn-record" id="record-btn">
+            <span class="rec-dot"></span>
+            <span id="record-label">Record</span>
+          </button>
+          <button class="btn-squelch" id="squelch-btn" title="Audio gate — silences dead air between transmissions. Restarts the stream when toggled (~2s gap).">
+            <span class="sq-dot"></span>
+            <span id="squelch-label">Squelch</span>
+          </button>
+        </div>
+        <div class="rec-status" id="rec-status" style="display:none">
+          <span id="rec-elapsed">0:00</span>
+          <span>·</span>
+          <span id="rec-size">0 KB</span>
+          <span class="filename" id="rec-filename"></span>
+        </div>
+        <div class="stream-url">{{ monitor_stream_url }}</div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Live EMS audio (SDRTrunk → Icecast) -->
     {% if stream_url %}
     <div class="card" style="margin-bottom:16px">
-      <h2>Live Audio</h2>
+      <h2>EMS Live Audio</h2>
       <div class="stream-player">
         <div id="stream-badge" class="stream-badge idle">
           <span class="dot gray" id="stream-dot"></span>
@@ -165,9 +282,10 @@
       </div>
     </div>
 
-    <!-- Manual override -->
+    <!-- Manual override (legacy: writes raw WAV to MANUAL_RECORDINGS_DIR) -->
     <div class="card">
       <h2>Manual Override</h2>
+      <div class="sub">Records raw WAV. For listening, use presets below.</div>
       <form id="override-form" onsubmit="submitOverride(event)">
         <label>Frequency</label>
         <input type="text" name="freq" placeholder="155.205M" required pattern="[\d.]+[kMG]?">
@@ -181,13 +299,38 @@
         </select>
         <label>Duration (seconds)</label>
         <input type="number" name="duration_s" value="120" min="5" max="3600">
-        <button type="submit" class="btn btn-primary" style="width:100%">Listen</button>
+        <button type="submit" class="btn btn-primary" style="width:100%">Record WAV</button>
       </form>
       <div id="override-status"></div>
       <button class="btn btn-danger btn-sm" style="margin-top:8px;display:none" id="release-btn"
               onclick="releaseOverride()">Release Override</button>
     </div>
 
+  </div>
+
+  <!-- Preset banks (full width row, below the main 2-col grid) -->
+  <div class="card full-width">
+    <h2>Quick Tune</h2>
+    <div class="sub">
+      One click tunes the live monitor stream above for
+      {{ monitor_default_duration_s }} seconds. Labels are starting points —
+      verify by listening and edit in <code>PRESETS</code> at the bottom of this template.
+    </div>
+
+    <div class="preset-group">
+      <div class="preset-group-label">
+        <span>Aviation (118–137 MHz · AM)</span>
+        <span style="color:#475569;font-size:0.65rem;text-transform:none;letter-spacing:0">
+          ★ confirmed active &nbsp; • educated guess
+        </span>
+      </div>
+      <div class="preset-grid" id="presets-aviation"></div>
+    </div>
+
+    <div class="preset-group">
+      <div class="preset-group-label">Cape County</div>
+      <div class="preset-grid" id="presets-capecounty"></div>
+    </div>
   </div>
 
   <!-- Recent calls -->
@@ -224,6 +367,271 @@
 </div><!-- .main -->
 
 <script>
+'use strict';
+
+const MONITOR_STREAM_URL = {{ monitor_stream_url|tojson }};
+const DEFAULT_DURATION_S = {{ monitor_default_duration_s }};
+
+// =============================================================================
+// PRESETS
+//
+// IMPORTANT: The aviation labels are EDUCATED GUESSES based on a 30-min
+// rtl_power scan of 118–137 MHz from Cape Girardeau (2026-05-27). Frequencies
+// marked ★ showed bursty voice activity (peak ≫ median dB), consistent with
+// real ATC sectors. Labels are inferred from the FAA band plan — ARTCC sectors
+// typically live in 132–135 MHz, approach/departure around 127.x, etc.
+//
+// 132.5363 is audibly confirmed as Memphis Center (verified 2026-05-27).
+// All other labels need to be confirmed by listening and refined here.
+// Don't trust the label until you've heard the channel ID itself.
+// =============================================================================
+const AVIATION_PRESETS = [
+  { freq: "131.36M",   mode: "am", gain: 40, label: "Memphis Center (strongest)", sub: "★ ARTCC sector, very active" },
+  { freq: "132.5363M", mode: "am", gain: 40, label: "Memphis Center",             sub: "★ ARTCC sector — verified" },
+  { freq: "135.23M",   mode: "am", gain: 40, label: "Memphis Center",             sub: "★ ARTCC sector" },
+  { freq: "135.50M",   mode: "am", gain: 40, label: "ARTCC sector",               sub: "★ high-altitude overflight" },
+  { freq: "127.49M",   mode: "am", gain: 40, label: "ARTCC / Approach",           sub: "★" },
+  { freq: "127.99M",   mode: "am", gain: 40, label: "ARTCC / Approach",           sub: "★" },
+  { freq: "132.89M",   mode: "am", gain: 40, label: "ARTCC sector",               sub: "★" },
+  { freq: "128.32M",   mode: "am", gain: 40, label: "ARTCC sector",               sub: "★" },
+  { freq: "124.71M",   mode: "am", gain: 40, label: "Approach/Departure",         sub: "★" },
+  { freq: "130.03M",   mode: "am", gain: 40, label: "ARTCC sector",               sub: "★" },
+  { freq: "136.11M",   mode: "am", gain: 40, label: "ARTCC sector",               sub: "★" },
+  { freq: "125.525M",  mode: "am", gain: 40, label: "KCGI Tower",                 sub: "quiet — listen during commercial arrivals" },
+  { freq: "119.0M",    mode: "am", gain: 40, label: "KCGI Tower (alt)",           sub: "per FAA Chart Supplement" },
+  { freq: "121.6M",    mode: "am", gain: 40, label: "KCGI Ground",                sub: "0700–1700 only" },
+  { freq: "120.55M",   mode: "am", gain: 40, label: "KCGI ATIS/ASOS",             sub: "may be phone-only — test" },
+  { freq: "133.65M",   mode: "am", gain: 40, label: "Memphis ARTCC (Paducah RCAG)", sub: "quiet from this location" },
+  { freq: "121.5M",    mode: "am", gain: 40, label: "Emergency Guard",            sub: "monitored only" },
+];
+
+const CAPECOUNTY_PRESETS = [
+  { freq: "155.205M", mode: "fm", gain: 30, label: "CCPA",  sub: "Cape County Private Ambulance (conventional)" },
+  // MOSWIN P25 — disabled until trunked decoder support lands. Visible so it's not forgotten.
+  { freq: "769.16875M", mode: "p25", gain: 30, label: "MOSWIN CC", sub: "REQUIRES P25 DECODER — NOT YET IMPLEMENTED",
+    disabled: true,
+    tooltip: "Cape County MOSWIN P25 Phase II at 769.16875 MHz needs a trunked-decoder integration (separate effort). EMS scanner job uses SDRTrunk for this but only when the discone is connected — see CLAUDE.md." },
+];
+
+let activePresetKey = null;
+
+function presetKey(p) { return p.freq + "|" + p.mode; }
+
+function renderPresets() {
+  renderPresetGroup("presets-aviation", AVIATION_PRESETS);
+  renderPresetGroup("presets-capecounty", CAPECOUNTY_PRESETS);
+}
+
+function renderPresetGroup(elId, presets) {
+  const grid = document.getElementById(elId);
+  if (!grid) return;
+  grid.innerHTML = "";
+  for (const p of presets) {
+    const btn = document.createElement("button");
+    btn.className = "preset-btn" + (activePresetKey === presetKey(p) ? " active" : "");
+    btn.disabled = !!p.disabled;
+    if (p.tooltip) btn.title = p.tooltip;
+    btn.innerHTML = `
+      <div>
+        <span class="freq">${escHtml(p.freq)}</span>
+        <span class="mode-tag">${escHtml(p.mode.toUpperCase())}</span>
+      </div>
+      <span class="label">${escHtml(p.label)}</span>
+      <span class="sublabel">${escHtml(p.sub || "")}</span>
+    `;
+    if (!p.disabled) {
+      btn.addEventListener("click", () => tunePreset(p));
+    }
+    grid.appendChild(btn);
+  }
+}
+
+async function tunePreset(p) {
+  const badge = document.getElementById("monitor-badge");
+  const dot = document.getElementById("monitor-dot");
+  const lbl = document.getElementById("monitor-label");
+  badge.className = "stream-badge idle";
+  dot.className = "dot yellow";
+  lbl.textContent = `Tuning ${p.freq} ${p.mode.toUpperCase()}…`;
+  try {
+    const r = await fetch("/api/monitor/tune", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        freq: p.freq, mode: p.mode, gain: p.gain,
+        label: p.label, duration_s: DEFAULT_DURATION_S,
+        audio_squelch: squelchEnabled,
+      }),
+    });
+    const j = await r.json();
+    if (j.error) {
+      lbl.textContent = "Tune failed: " + j.error;
+      dot.className = "dot red";
+      return;
+    }
+    activePresetKey = presetKey(p);
+    renderPresets();
+    // Give Icecast time to start serving (~7-9s for dynaudnorm lookahead +
+    // mp3 frame buffering), then reload audio src with a cache buster and play.
+    lbl.textContent = "Waiting for stream…";
+    await new Promise(r => setTimeout(r, 8000));
+    if (MONITOR_STREAM_URL) {
+      const audio = document.getElementById("monitor-audio");
+      audio.src = MONITOR_STREAM_URL + (MONITOR_STREAM_URL.includes("?") ? "&" : "?") + "t=" + Date.now();
+      audio.load();
+      // Try to auto-play. Browsers may refuse without a prior user gesture —
+      // but the preset click IS a user gesture, so this usually succeeds.
+      try { await audio.play(); } catch (e) { /* user can press play manually */ }
+    }
+    badge.className = "stream-badge live";
+    dot.className = "dot green";
+    lbl.textContent = `${p.label} — ${p.freq} ${p.mode.toUpperCase()}`;
+  } catch (err) {
+    lbl.textContent = "Request failed: " + err;
+    dot.className = "dot red";
+  }
+}
+
+// =============================================================================
+// Recording
+// =============================================================================
+async function toggleRecording() {
+  const btn = document.getElementById("record-btn");
+  btn.disabled = true;
+  try {
+    const stat = await (await fetch("/api/recording/status")).json();
+    if (stat.active) {
+      await fetch("/api/recording/stop", {method: "POST"});
+    } else {
+      await fetch("/api/recording/start", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({}),  // server will pick up current monitor freq/mode
+      });
+    }
+  } catch (e) {}
+  btn.disabled = false;
+  pollRecording();
+}
+
+function fmtElapsed(s) {
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+function fmtBytes(b) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024*1024) return `${Math.round(b/1024)} KB`;
+  return `${(b/1024/1024).toFixed(1)} MB`;
+}
+
+async function pollRecording() {
+  try {
+    const stat = await (await fetch("/api/recording/status")).json();
+    const btn = document.getElementById("record-btn");
+    const lbl = document.getElementById("record-label");
+    const status = document.getElementById("rec-status");
+    const banner = document.getElementById("rec-banner");
+    if (stat.active) {
+      btn.classList.add("recording");
+      lbl.textContent = "Stop Recording";
+      status.style.display = "flex";
+      document.getElementById("rec-elapsed").textContent = fmtElapsed(stat.elapsed_s);
+      document.getElementById("rec-size").textContent = fmtBytes(stat.size_bytes);
+      document.getElementById("rec-filename").textContent = stat.filename;
+      banner.classList.add("show");
+      document.getElementById("rec-banner-name").textContent = stat.filename;
+      document.getElementById("rec-banner-elapsed").textContent = fmtElapsed(stat.elapsed_s);
+    } else {
+      btn.classList.remove("recording");
+      lbl.textContent = "Record";
+      status.style.display = "none";
+      banner.classList.remove("show");
+    }
+  } catch (e) {}
+}
+
+document.getElementById("record-btn").addEventListener("click", toggleRecording);
+
+// =============================================================================
+// Squelch toggle (ffmpeg agate)
+//
+// Persisted in localStorage so the user's preference survives reloads. On
+// first page load with no saved value, we adopt whatever the server reports
+// as its current state (which itself defaults to MONITOR_SQUELCH_DEFAULT).
+// Toggling restarts the running monitor ffmpeg pipeline (~1-2s stream gap).
+// =============================================================================
+const LS_SQUELCH = "scanner-squelch";
+let squelchEnabled = true;  // overwritten by initSquelch()
+
+function renderSquelchUI() {
+  const btn = document.getElementById("squelch-btn");
+  const lbl = document.getElementById("squelch-label");
+  if (squelchEnabled) {
+    btn.classList.add("on");
+    lbl.textContent = "Squelch ON";
+  } else {
+    btn.classList.remove("on");
+    lbl.textContent = "Squelch OFF";
+  }
+}
+
+async function initSquelch() {
+  const saved = localStorage.getItem(LS_SQUELCH);
+  if (saved !== null) {
+    squelchEnabled = saved === "true";
+  } else {
+    // Fall through to whatever the scheduler reports
+    try {
+      const d = await (await fetch("/api/monitor/squelch")).json();
+      if (typeof d.enabled === "boolean") squelchEnabled = d.enabled;
+    } catch (e) {}
+  }
+  renderSquelchUI();
+}
+
+async function toggleSquelch() {
+  const btn = document.getElementById("squelch-btn");
+  const lbl = document.getElementById("squelch-label");
+  btn.disabled = true;
+  const next = !squelchEnabled;
+  lbl.textContent = next ? "Turning ON…" : "Turning OFF…";
+  try {
+    const r = await fetch("/api/monitor/squelch", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({enabled: next}),
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    squelchEnabled = !!j.enabled;
+    localStorage.setItem(LS_SQUELCH, String(squelchEnabled));
+    renderSquelchUI();
+    if (j.restarted && MONITOR_STREAM_URL) {
+      // Reload the audio element so the listener picks up the restarted stream
+      // instead of holding a dead connection through the brief Icecast gap.
+      const audio = document.getElementById("monitor-audio");
+      const wasPlaying = !audio.paused;
+      setTimeout(() => {
+        audio.src = MONITOR_STREAM_URL + "?t=" + Date.now();
+        audio.load();
+        if (wasPlaying) audio.play().catch(() => {});
+      }, 2500);
+    }
+  } catch (e) {
+    renderSquelchUI();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById("squelch-btn").addEventListener("click", toggleSquelch);
+initSquelch();
+
+// =============================================================================
+// Manual override (legacy)
+// =============================================================================
 async function submitOverride(e) {
   e.preventDefault();
   const fd = new FormData(e.target);
@@ -259,6 +667,9 @@ async function releaseOverride() {
   document.getElementById("release-btn").style.display = "none";
 }
 
+// =============================================================================
+// EMS stream + general status polling
+// =============================================================================
 async function pollStream() {
   try {
     const r = await fetch("/api/stream");
@@ -279,27 +690,44 @@ async function pollStream() {
   } catch (_) {}
 }
 
-// Poll status every 5 seconds and update the page without a full reload.
 async function pollStatus() {
   try {
     const r = await fetch("/api/status");
     const s = await r.json();
 
-    // Update current job
     const el = document.getElementById("status-current");
     if (s.current) {
       el.innerHTML = `<span class="dot green"></span>
         <span>
           <div class="job-name">${fmtName(s.current.name)}</div>
-          ${s.current.detail ? `<div class="job-detail">${s.current.detail}</div>` : ""}
+          ${s.current.detail ? `<div class="job-detail">${escHtml(s.current.detail)}</div>` : ""}
         </span>`;
       document.getElementById("release-btn").style.display =
         s.current.name === "manual_override" ? "inline-block" : "none";
+
+      // Track active preset based on monitor job detail
+      if (s.current.name === "monitor" && s.current.detail) {
+        // detail looks like "131.36M AM — Memphis Center (strongest)"
+        const parts = s.current.detail.split(/\s+/);
+        const freq = parts[0];
+        const mode = (parts[1] || "").toLowerCase();
+        const key = freq + "|" + mode;
+        if (activePresetKey !== key) {
+          activePresetKey = key;
+          renderPresets();
+        }
+      } else if (activePresetKey !== null) {
+        activePresetKey = null;
+        renderPresets();
+        const lbl = document.getElementById("monitor-label");
+        if (lbl) lbl.textContent = "Idle";
+        const dot = document.getElementById("monitor-dot");
+        if (dot) dot.className = "dot gray";
+      }
     } else {
       el.innerHTML = `<span class="dot gray"></span><span class="job-detail">Idle</span>`;
     }
 
-    // Update queue
     const ql = document.getElementById("queue-list");
     if (s.queue && s.queue.length > 0) {
       ql.innerHTML = s.queue.map(j =>
@@ -310,14 +738,13 @@ async function pollStatus() {
       ql.innerHTML = `<div class="empty-state">Nothing queued.</div>`;
     }
 
-    // Update activity
     const al = document.getElementById("activity-log");
     if (s.recent && s.recent.length > 0) {
       al.innerHTML = s.recent.map(e =>
         `<div class="activity-row">
           <span class="activity-ts">${e.ts.slice(11,19)}</span>
           <span class="${e.success ? "activity-ok" : "activity-fail"}">
-            ${fmtName(e.job)}${e.detail ? " — " + e.detail : ""}
+            ${fmtName(e.job)}${e.detail ? " — " + escHtml(e.detail) : ""}
           </span>
         </div>`
       ).join("");
@@ -350,12 +777,15 @@ async function pollCalls() {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
+renderPresets();
+pollRecording();
 setInterval(pollStatus, 5000);
 setInterval(pollCalls, 30000);
 setInterval(pollStream, 5000);
+setInterval(pollRecording, 2000);
 pollStream();
 </script>
 </body>

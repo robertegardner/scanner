@@ -21,14 +21,46 @@ this project uses the spare Nooelec on a separate USB port.
 
 ## Status
 
-**Stages 0–5 complete and running on the Pi** (as of 2026-05-23).
+**Stages 0–5 complete and running on the Pi.** As of 2026-05-27 the system is
+in daily use for VHF aviation AM listening on the discone; EMS scanning works
+when the discone is repositioned for 700 MHz.
 
-- Scheduler, EMS job, NOAA APT job, pass predictor, Flask UI — all implemented and deployed.
+**Implemented + live:**
+- Scheduler with priority preemption, EMS job (SDRTrunk), NOAA APT job,
+  ManualJob (raw WAV capture), MonitorJob (live ffmpeg → Icecast stream).
+- Pass predictor with TLE auto-refresh; NOAA passes auto-queue ~5 min before AOS.
+- Flask web UI on port 8081: dashboard with status/queue/activity,
+  Aviation + Cape County preset banks, live monitor stream player,
+  Record button + `/recordings` MP3 library with disk-usage warning,
+  separate `/monitor` tuner page, `/calls` (EMS call log),
+  `/gallery` (NOAA images).
+- Audio post-processing chain (ffmpeg) for the live monitor: AM uses
+  band-limit + agate squelch + compand + dynaudnorm + alimiter;
+  FM uses a gentler chain. All filters live in env vars
+  (`MONITOR_AUDIO_FILTER_AM`, `MONITOR_AUDIO_FILTER_FM`,
+  `MONITOR_AUDIO_SQUELCH`) using a `{squelch}` placeholder so the
+  dashboard Squelch toggle restarts the pipeline with/without the gate
+  (~2s gap; agate's threshold isn't a runtime command).
+- `SCHEDULER_AUTOPILOT=false` mode: scheduler stays idle, no EMS
+  auto-start, no NOAA passes queued. The HTTP API stays up for manual
+  tuning. Flip via `/etc/scanner/config.env` and restart.
 - systemd units enabled; services start on boot.
-- VHF dipole connected: NOAA APT captures working. **Discone arriving soon** for MOSWIN 700 MHz coverage.
-- First NOAA satellite images expected imminently (pass watcher is live, TLEs current).
 
-Next work: verify NOAA image quality once first pass completes, then MOSWIN P25 decoding once discone arrives, then Stage 6 (AIS).
+**Hardware:**
+- Discone connected and in use for aviation AM (118–137 MHz). Antenna
+  swap to 137 MHz dipole needed for NOAA APT; manual swap for now.
+- Spectrum scan via `rtl_power` confirms a healthy aviation band with
+  20+ active ARTCC/approach channels above the noise floor in a
+  weekday-morning window. KCGI tower (125.525) traffic confirmed audible.
+
+**Known stubs:**
+- `jobs/ais_poll.py` — Stage 6
+- `jobs/acars_poll.py` — Stage 7
+- P25 trunked decoding integration via SDRTrunk works for EMS but
+  requires discone repositioned to 700 MHz.
+
+**Next work:** AIS poll job (Stage 6), antenna-switching automation
+(currently manual), MOSWIN listening when discone is on 700 MHz.
 
 ## Where things will go
 

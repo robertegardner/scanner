@@ -120,10 +120,15 @@ class NOAAJob(Job):
             return JobResult(success=False, log="noaa-apt decode timed out")
 
         if result.returncode != 0:
+            img_path.unlink(missing_ok=True)
             return JobResult(
                 success=False,
                 log=f"noaa-apt rc={result.returncode}: {result.stderr[:500]}",
             )
+
+        if not img_path.exists() or img_path.stat().st_size < 10240:
+            img_path.unlink(missing_ok=True)
+            return JobResult(success=False, log="noaa-apt produced empty image")
 
         for line in (result.stderr + result.stdout).splitlines():
             if line.strip():

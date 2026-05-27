@@ -39,6 +39,40 @@ log = logging.getLogger("scheduler")
 # Configuration
 # ---------------------------------------------------------------------------
 
+# Default filter chains — overridden by config.env. Keep these in sync with
+# files/etc/scanner/config.env.example so a missing env var produces something
+# sensible rather than silence.
+#
+# AM chain (designed for ATC voice on the 118-137 MHz aviation band):
+#   - 200/3400 Hz band-limit to the speech formant range
+#   - compand transfer curve: -22dB and below maps 1:1 (no upward expansion
+#     of dead air), -13dB voice RMS lifts to -8dB, peaks at -2dB compress to
+#     -4dB. Soft-knee 4dB smooths the transitions.
+#   - dynaudnorm with g=15 (3.75s lookahead, safe vs Icecast's 10s timeout)
+#     adds the final loudness pass
+#   - alimiter at 0.95 is the brick-wall safety net for any remaining peaks
+#
+# {squelch} is a placeholder substituted at runtime — when audio_squelch is
+# True the agate filter chunk goes there; when False it becomes empty so the
+# chain runs gate-less. This keeps a single env var per mode while letting
+# the UI toggle gating live.
+#
+# dynaudnorm's gausssize defaults to 31 (~7.5s lookahead) which exceeds
+# Icecast's source-timeout and silently kills the stream during startup —
+# any chain published to Icecast must use a smaller g.
+_DEFAULT_FILTER_AM = (
+    "highpass=f=200, lowpass=f=3400, {squelch}"
+    "compand=attacks=0.05:decays=0.3:points=-60/-60|-22/-18|-13/-1|-2/-4:soft-knee=4:gain=0, "
+    "dynaudnorm=p=0.95:m=15:s=10:g=15, "
+    "alimiter=level_in=1:level_out=0.95:limit=0.95:attack=5:release=50"
+)
+_DEFAULT_FILTER_FM = (
+    "highpass=f=80, lowpass=f=5000, {squelch}"
+    "dynaudnorm=p=0.85:m=15:s=10:g=11"
+)
+_DEFAULT_SQUELCH = "agate=threshold=0.06:ratio=8:attack=20:release=150:detection=rms:link=average"
+
+
 @dataclass
 class Config:
     scheduler_port: int
@@ -47,7 +81,16 @@ class Config:
     ems_recordings_dir: str
     noaa_data_dir: str
     manual_recordings_dir: str
+    recordings_dir: str
     sdr_device_index: int
+    audio_filter_am: str
+    audio_filter_fm: str
+    audio_squelch_filter: str
+    audio_bitrate: str
+    monitor_default_duration_s: int
+    recording_source_url: str
+    autopilot: bool
+    squelch_default: bool
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -58,8 +101,56 @@ class Config:
             ems_recordings_dir=os.environ.get("EMS_RECORDINGS_DIR", "/var/lib/scanner/ems/recordings"),
             noaa_data_dir=os.environ.get("NOAA_DATA_DIR", "/var/lib/scanner/noaa"),
             manual_recordings_dir=os.environ.get("MANUAL_RECORDINGS_DIR", "/var/lib/scanner/manual"),
+            recordings_dir=os.environ.get("RECORDINGS_DIR", "/var/lib/scanner/recordings"),
             sdr_device_index=int(os.environ.get("SDR_DEVICE_INDEX", "0")),
+            audio_filter_am=os.environ.get("MONITOR_AUDIO_FILTER_AM", _DEFAULT_FILTER_AM),
+            audio_filter_fm=os.environ.get("MONITOR_AUDIO_FILTER_FM", _DEFAULT_FILTER_FM),
+            audio_squelch_filter=os.environ.get("MONITOR_AUDIO_SQUELCH", _DEFAULT_SQUELCH),
+            audio_bitrate=os.environ.get("MONITOR_AUDIO_BITRATE", "64k"),
+            monitor_default_duration_s=int(os.environ.get("MONITOR_DEFAULT_DURATION_S", "600")),
+            recording_source_url=os.environ.get("RECORDING_SOURCE_URL", "http://localhost:8000/monitor.mp3"),
+            autopilot=os.environ.get("SCHEDULER_AUTOPILOT", "true").lower() in ("1", "true", "yes", "on"),
+            squelch_default=os.environ.get("MONITOR_SQUELCH_DEFAULT", "true").lower() in ("1", "true", "yes", "on"),
         )
+
+
+def _drain_named(stream, tag: str) -> None:
+    """Forward a subprocess stream to the scheduler log with a prefix."""
+    if stream is None:
+        return
+    try:
+        for raw in stream:
+            try:
+                line = raw.decode(errors="replace").rstrip()
+            except Exception:
+                continue
+            if line:
+                log.info("%s: %s", tag, line)
+    except Exception:
+        pass
+
+
+def audio_filter_for(mode: str, config: Config, audio_squelch: bool = True) -> str:
+    """Pick the post-rtl_fm filter chain for the given demod mode.
+
+    AM gets an aggressive compressor/limiter chain because rtl_fm's AM
+    envelope detector has a ~14 dB dynamic range from quiet voice (-22 dBFS
+    RMS) to loud aircraft transmissions (-2 dBFS peak). NBFM gets a milder
+    filter (-3 dB squelch already enforced in hardware by `-l`).
+
+    The {squelch} placeholder is substituted at runtime with the agate
+    filter (when audio_squelch is True) or removed (when False). This lets
+    a single env var per mode carry both states without the UI having to
+    rebuild the filter from parts.
+
+    ffmpeg's lavfi parser rejects whitespace around the comma separators
+    between chained filters (silent failure — ffmpeg starts then never
+    publishes), so we normalize "a, b, c" → "a,b,c" before handing it off.
+    """
+    template = config.audio_filter_am if mode == "am" else config.audio_filter_fm
+    squelch_chunk = (config.audio_squelch_filter + ", ") if audio_squelch else ""
+    chain = template.replace("{squelch}", squelch_chunk)
+    return re.sub(r"\s*,\s*", ",", chain.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -69,15 +160,19 @@ class Config:
 _VALID_FREQ = re.compile(r"^\d+(\.\d+)?[kMG]?$")
 _VALID_MODE = {"fm", "am", "usb", "lsb", "wbfm", "raw"}
 
+MONITOR_ICECAST_URL = os.environ.get("MONITOR_ICECAST_URL", "")
+
 
 class ManualJob(Job):
     name = "manual_override"
     priority = 10
 
-    def __init__(self, freq: str, mode: str, duration_s: int, config: Config):
+    def __init__(self, freq: str, mode: str, duration_s: int, config: Config,
+                 gain: Optional[int] = None):
         self.freq = freq
         self.mode = mode
         self.duration_s = min(max(duration_s, 5), 3600)
+        self.gain = gain  # None = rtl_fm auto gain
         self._config = config
         self.output_file: Optional[Path] = None
 
@@ -98,8 +193,11 @@ class ManualJob(Job):
             "-M", self.mode,
             "-s", "200000",
             "-r", "48000",
-            "-",
         ]
+        if self.gain is not None:
+            rtl_fm_cmd += ["-g", str(self.gain)]
+        rtl_fm_cmd.append("-")
+
         sox_cmd = [
             "sox",
             "-t", "raw", "-r", "48000", "-e", "signed", "-b", "16", "-",
@@ -138,6 +236,288 @@ class ManualJob(Job):
         return False
 
 
+class MonitorJob(Job):
+    """Live-stream a frequency to an Icecast mount for browser listening."""
+    name = "monitor"
+    priority = 3  # preempts EMS (1) but yields to NOAA (5) and manual (10)
+
+    def __init__(self, freq: str, mode: str, gain: int, duration_s: int,
+                 label: str, config: Config, squelch: int = 0,
+                 audio_squelch: bool = True):
+        self.freq = freq
+        self.mode = mode
+        self.gain = max(0, min(gain, 60))
+        # Up to 8h so the user can park on a freq and walk away while tweaking.
+        self.duration_s = min(max(duration_s, 5), 28800)
+        self.label = label
+        self.squelch = max(0, squelch)            # rtl_fm hardware squelch (-l)
+        self.audio_squelch = audio_squelch        # ffmpeg agate post-demod
+        self._config = config
+
+    def status_detail(self) -> str:
+        suffix = f" — {self.label}" if self.label else ""
+        sq = f" sq={self.squelch}" if self.squelch > 0 else ""
+        gate = "" if self.audio_squelch else " gate-off"
+        return f"{self.freq} {self.mode.upper()}{sq}{gate}{suffix}"
+
+    def run(self, preempt_signal: threading.Event) -> JobResult:
+        if not MONITOR_ICECAST_URL:
+            return JobResult(success=False, log="MONITOR_ICECAST_URL not configured")
+
+        rtl_cmd = [
+            "rtl_fm",
+            "-d", str(self._config.sdr_device_index),
+            "-f", self.freq,
+            "-M", self.mode,
+            "-s", "200000",
+            "-r", "48000",
+            "-g", str(self.gain),
+        ]
+        if self.squelch > 0:
+            rtl_cmd += ["-l", str(self.squelch)]
+        rtl_cmd.append("-")
+        af = audio_filter_for(self.mode, self._config, self.audio_squelch)
+        ffmpeg_cmd = [
+            "ffmpeg", "-y", "-loglevel", "warning",
+            "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", "pipe:0",
+            "-af", af,
+            "-codec:a", "libmp3lame", "-b:a", self._config.audio_bitrate,
+            "-f", "mp3", MONITOR_ICECAST_URL,
+        ]
+
+        log.info("Monitor: %s %s gain=%d squelch=%s filter=%s → Icecast (%s)",
+                 self.freq, self.mode, self.gain,
+                 "on" if self.audio_squelch else "off",
+                 af.split(",")[0].strip(), self.label)
+
+        try:
+            rtl = subprocess.Popen(rtl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            ffmpeg = subprocess.Popen(ffmpeg_cmd, stdin=rtl.stdout,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            rtl.stdout.close()
+
+            # Tag stderr so failures (bad filter, icecast auth, missing tuner) are visible in journald.
+            threading.Thread(target=_drain_named, args=(rtl.stderr, "monitor-rtl_fm"), daemon=True).start()
+            threading.Thread(target=_drain_named, args=(ffmpeg.stderr, "monitor-ffmpeg"), daemon=True).start()
+
+            deadline = time.monotonic() + self.duration_s
+            while time.monotonic() < deadline:
+                if preempt_signal.wait(timeout=1.0):
+                    break
+
+            rtl.terminate()
+            ffmpeg.terminate()
+            try:
+                rtl.wait(timeout=5)
+                ffmpeg.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                rtl.kill()
+                ffmpeg.kill()
+
+        except FileNotFoundError as e:
+            return JobResult(success=False, log=f"rtl_fm or ffmpeg not found: {e}")
+
+        return JobResult(success=True, log=f"Monitor {self.freq} {self.mode} done")
+
+    def should_requeue(self) -> bool:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Recording manager — captures the live Icecast monitor stream to disk.
+# Independent of the SDR; survives tune changes because it consumes the
+# already-encoded MP3 stream rather than reaching into the rtl_fm pipeline.
+# ---------------------------------------------------------------------------
+
+_REC_FILENAME = re.compile(
+    r"^rec-(\d{4}-\d{2}-\d{2})_(\d{6})-([\d.]+(?:[kMG]Hz)?)-([A-Z]+)\.mp3$"
+)
+
+
+def _sanitize_freq(freq: str) -> str:
+    """Normalize a freq string for the filename: '131.36M' → '131.36MHz', '500k' → '500kHz'."""
+    if not freq:
+        return "unknown"
+    if freq[-1] in "kMG":
+        return f"{freq}Hz"
+    return f"{freq}Hz" if freq.replace(".", "").isdigit() else freq
+
+
+class RecordingManager:
+    def __init__(self, config: Config):
+        self._config = config
+        self._lock = threading.Lock()
+        self._proc: Optional[subprocess.Popen] = None
+        self._path: Optional[Path] = None
+        self._started: Optional[datetime] = None
+        self._freq: Optional[str] = None
+        self._mode: Optional[str] = None
+
+    # ----- lifecycle -----
+    def start(self, freq: Optional[str], mode: Optional[str]) -> dict:
+        with self._lock:
+            if self._proc and self._proc.poll() is None:
+                return {"error": "already recording", "filename": self._path.name if self._path else None}
+
+            recdir = Path(self._config.recordings_dir)
+            recdir.mkdir(parents=True, exist_ok=True)
+
+            now = datetime.now()
+            freq_tag = _sanitize_freq(freq) if freq else "unknown"
+            mode_tag = (mode or "unk").upper()
+            filename = f"rec-{now.strftime('%Y-%m-%d_%H%M%S')}-{freq_tag}-{mode_tag}.mp3"
+            path = recdir / filename
+
+            cmd = [
+                "ffmpeg", "-y", "-loglevel", "warning",
+                "-reconnect", "1",
+                "-reconnect_streamed", "1",
+                "-reconnect_delay_max", "30",
+                "-i", self._config.recording_source_url,
+                "-c:a", "copy",
+                "-f", "mp3",
+                str(path),
+            ]
+
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+                )
+            except FileNotFoundError as e:
+                return {"error": f"ffmpeg not found: {e}"}
+
+            self._proc = proc
+            self._path = path
+            self._started = now
+            self._freq = freq
+            self._mode = mode
+
+            # Drain stderr in background so the pipe doesn't fill
+            threading.Thread(target=self._drain_stderr, args=(proc,), daemon=True).start()
+
+            log.info("Recording started: %s ← %s", filename, self._config.recording_source_url)
+            return {
+                "status": "started",
+                "filename": filename,
+                "freq": freq,
+                "mode": mode,
+            }
+
+    def stop(self) -> dict:
+        with self._lock:
+            proc = self._proc
+            path = self._path
+            if not proc or proc.poll() is not None:
+                self._proc = None
+                return {"error": "not recording"}
+
+            # ffmpeg writes MP3 trailer on 'q' to stdin; SIGINT also flushes cleanly.
+            try:
+                proc.send_signal(signal.SIGINT)
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+            size = path.stat().st_size if path and path.exists() else 0
+            log.info("Recording stopped: %s (%d bytes)", path.name if path else "?", size)
+
+            result = {
+                "status": "stopped",
+                "filename": path.name if path else None,
+                "size_bytes": size,
+            }
+            self._proc = None
+            return result
+
+    def _drain_stderr(self, proc: subprocess.Popen) -> None:
+        for line in proc.stderr:
+            try:
+                msg = line.decode(errors="replace").rstrip()
+            except Exception:
+                continue
+            if msg:
+                log.info("recording-ffmpeg: %s", msg)
+
+    # ----- introspection -----
+    def status(self) -> dict:
+        with self._lock:
+            active = self._proc is not None and self._proc.poll() is None
+            if not active:
+                return {"active": False}
+            elapsed = (datetime.now() - self._started).total_seconds() if self._started else 0
+            size = self._path.stat().st_size if self._path and self._path.exists() else 0
+            return {
+                "active": True,
+                "filename": self._path.name,
+                "freq": self._freq,
+                "mode": self._mode,
+                "elapsed_s": int(elapsed),
+                "size_bytes": size,
+            }
+
+    def list_files(self) -> list[dict]:
+        recdir = Path(self._config.recordings_dir)
+        if not recdir.exists():
+            return []
+        out = []
+        for f in sorted(recdir.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True):
+            stat = f.stat()
+            m = _REC_FILENAME.match(f.name)
+            entry = {
+                "filename": f.name,
+                "size_bytes": stat.st_size,
+                "size_kb": round(stat.st_size / 1024),
+                "mtime": stat.st_mtime,
+                "mtime_iso": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+            }
+            if m:
+                entry["captured_freq"] = m.group(3)
+                entry["captured_mode"] = m.group(4)
+            out.append(entry)
+        return out
+
+    def delete_file(self, filename: str) -> dict:
+        recdir = Path(self._config.recordings_dir).resolve()
+        target = (recdir / filename).resolve()
+        # Path traversal guard
+        if not str(target).startswith(str(recdir) + os.sep) and target != recdir:
+            return {"error": "invalid filename"}
+        if target.suffix != ".mp3" or not target.exists():
+            return {"error": "not found"}
+        with self._lock:
+            if self._path and self._path.resolve() == target:
+                return {"error": "cannot delete file currently being recorded"}
+        target.unlink()
+        log.info("Recording deleted: %s", filename)
+        return {"status": "deleted", "filename": filename}
+
+    def disk_usage(self) -> dict:
+        recdir = Path(self._config.recordings_dir)
+        # Use the recordings dir's filesystem for the warning threshold.
+        target = recdir if recdir.exists() else recdir.parent
+        try:
+            st = os.statvfs(target)
+            total = st.f_blocks * st.f_frsize
+            free = st.f_bavail * st.f_frsize
+            used = total - free
+            pct_used = (used / total * 100) if total else 0
+        except OSError:
+            total = free = used = pct_used = 0
+        own_bytes = sum(f.stat().st_size for f in recdir.glob("*.mp3")) if recdir.exists() else 0
+        return {
+            "fs_total_bytes": total,
+            "fs_used_bytes": used,
+            "fs_free_bytes": free,
+            "fs_pct_used": round(pct_used, 1),
+            "recordings_bytes": own_bytes,
+            "warn": pct_used > 80,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
@@ -153,13 +533,33 @@ class Scheduler:
         self._lock = threading.Lock()
         self._activity: deque[dict] = deque(maxlen=100)
         self._manual_job: Optional[ManualJob] = None
+        self._monitor_job: Optional[MonitorJob] = None
         self._upcoming_passes: list[dict] = []
+        self._recorder = RecordingManager(config)
+        # Squelch (ffmpeg agate) state — toggled live from the dashboard.
+        # New monitor tunes inherit this value unless they override it.
+        self._audio_squelch = config.squelch_default
+
+    @property
+    def recorder(self) -> "RecordingManager":
+        return self._recorder
+
+    def current_freq_mode(self) -> tuple[Optional[str], Optional[str]]:
+        """Return (freq, mode) of the current Monitor job, if any."""
+        with self._lock:
+            job = self._current_job
+        if isinstance(job, MonitorJob):
+            return job.freq, job.mode
+        return None, None
 
     def start(self) -> None:
-        self._queue.push(EMSJob(self._config))
+        if self._config.autopilot:
+            self._queue.push(EMSJob(self._config))
+            threading.Thread(target=self._pass_watcher, daemon=True, name="pass-watcher").start()
+            log.info("Scheduler started (autopilot ON: EMS default + NOAA passes)")
+        else:
+            log.info("Scheduler started (autopilot OFF: idle until manually tuned)")
         threading.Thread(target=self._loop, daemon=True, name="scheduler-loop").start()
-        threading.Thread(target=self._pass_watcher, daemon=True, name="pass-watcher").start()
-        log.info("Scheduler started")
 
     def _loop(self) -> None:
         while True:
@@ -185,9 +585,14 @@ class Scheduler:
                 self._current_thread = None
                 if isinstance(job, ManualJob):
                     self._manual_job = None
+                if isinstance(job, MonitorJob):
+                    self._monitor_job = None
 
             if job.should_requeue():
-                self._queue.push(job)
+                # When autopilot is off we deliberately suppress EMS's self-requeue
+                # so the scheduler stays idle between manual tunes.
+                if self._config.autopilot or not isinstance(job, EMSJob):
+                    self._queue.push(job)
 
     def _pass_watcher(self) -> None:
         """Background thread: predict NOAA passes and queue them ~5 min before AOS."""
@@ -271,12 +676,13 @@ class Scheduler:
             self._preempt_signal.set()
         self._queue.push(job)
 
-    def override(self, freq: str, mode: str, duration_s: int) -> dict:
+    def override(self, freq: str, mode: str, duration_s: int,
+                 gain: Optional[int] = None) -> dict:
         if not _VALID_FREQ.match(freq):
             return {"error": "invalid frequency"}
         if mode not in _VALID_MODE:
             return {"error": f"mode must be one of {sorted(_VALID_MODE)}"}
-        job = ManualJob(freq, mode, duration_s, self._config)
+        job = ManualJob(freq, mode, duration_s, self._config, gain=gain)
         with self._lock:
             self._manual_job = job
         self.push_job(job)
@@ -290,6 +696,83 @@ class Scheduler:
             return {"status": "released"}
         self._queue.remove_by_name("manual_override")
         return {"status": "nothing to release"}
+
+    def monitor_tune(self, freq: str, mode: str, gain: int, label: str,
+                     duration_s: int = 3600, squelch: int = 0,
+                     audio_squelch: Optional[bool] = None) -> dict:
+        if not _VALID_FREQ.match(freq):
+            return {"error": "invalid frequency"}
+        if mode not in _VALID_MODE:
+            return {"error": f"mode must be one of {sorted(_VALID_MODE)}"}
+        if not MONITOR_ICECAST_URL:
+            return {"error": "MONITOR_ICECAST_URL not configured on server"}
+        # If the caller didn't specify, inherit the dashboard's current toggle.
+        # Persist their explicit choice so future toggles know the latest state.
+        effective_squelch = self._audio_squelch if audio_squelch is None else bool(audio_squelch)
+        if audio_squelch is not None:
+            self._audio_squelch = effective_squelch
+        job = MonitorJob(freq, mode, gain, duration_s, label, self._config,
+                         squelch=squelch, audio_squelch=effective_squelch)
+        with self._lock:
+            self._monitor_job = job
+            current = self._current_job
+        self._queue.remove_by_name("monitor")
+        # Explicitly preempt a running monitor job — same-priority jobs
+        # don't trigger push_job's check, so we handle that case here.
+        # push_job still handles the EMS→Monitor case (priority 3 > 1).
+        if isinstance(current, MonitorJob):
+            self._preempt_signal.set()
+        self.push_job(job)
+        return {"status": "queued", "freq": freq, "mode": mode, "gain": gain,
+                "label": label, "audio_squelch": effective_squelch}
+
+    def get_squelch(self) -> dict:
+        with self._lock:
+            current = self._current_job
+        return {
+            "enabled": self._audio_squelch,
+            "active_on_monitor": isinstance(current, MonitorJob) and current.audio_squelch,
+        }
+
+    def set_squelch(self, enabled: bool) -> dict:
+        """Toggle the audio gate. Restarts a running monitor job in place.
+
+        Implementation note: ffmpeg's agate filter doesn't expose threshold as
+        a runtime command, so we restart the rtl_fm→ffmpeg pipeline (~1-2s
+        stream gap) rather than use the zmq/sendcmd approach. The UI should
+        show a transient "Squelch on/off" message during the restart.
+        """
+        enabled = bool(enabled)
+        with self._lock:
+            self._audio_squelch = enabled
+            current = self._current_job
+        restarted = False
+        if isinstance(current, MonitorJob):
+            # Re-queue with the same freq/mode/gain/label but new squelch state.
+            # We use the in-flight job's stored params, NOT _monitor_job, which
+            # might be a stale reference if multiple tunes raced.
+            self.monitor_tune(
+                freq=current.freq,
+                mode=current.mode,
+                gain=current.gain,
+                label=current.label,
+                duration_s=current.duration_s,
+                squelch=current.squelch,
+                audio_squelch=enabled,
+            )
+            restarted = True
+        return {"enabled": enabled, "restarted": restarted}
+
+    def monitor_stop(self) -> dict:
+        with self._lock:
+            current = self._current_job
+        if isinstance(current, MonitorJob):
+            self._preempt_signal.set()
+            return {"status": "stopped"}
+        self._queue.remove_by_name("monitor")
+        with self._lock:
+            self._monitor_job = None
+        return {"status": "nothing to stop"}
 
     def status(self) -> dict:
         with self._lock:
@@ -358,13 +841,46 @@ def create_api(scheduler: Scheduler) -> Flask:
         freq = data.get("freq", "")
         mode = data.get("mode", "fm").lower()
         duration_s = int(data.get("duration_s", 120))
-        result = scheduler.override(freq, mode, duration_s)
+        gain_raw = data.get("gain")
+        gain = int(gain_raw) if gain_raw is not None else None
+        result = scheduler.override(freq, mode, duration_s, gain=gain)
         code = 400 if "error" in result else 200
         return jsonify(result), code
 
     @api.route("/release", methods=["POST"])
     def release():
         return jsonify(scheduler.release())
+
+    @api.route("/monitor/tune", methods=["POST"])
+    def monitor_tune():
+        data = request.get_json(force=True)
+        freq = data.get("freq", "")
+        mode = data.get("mode", "fm").lower()
+        gain = int(data.get("gain", 20))
+        label = str(data.get("label", ""))
+        duration_s = int(data.get("duration_s", 3600))
+        squelch = int(data.get("squelch", 0))
+        audio_squelch = data.get("audio_squelch")
+        if audio_squelch is not None:
+            audio_squelch = bool(audio_squelch)
+        result = scheduler.monitor_tune(freq, mode, gain, label, duration_s,
+                                        squelch=squelch, audio_squelch=audio_squelch)
+        code = 400 if "error" in result else 200
+        return jsonify(result), code
+
+    @api.route("/monitor/stop", methods=["POST"])
+    def monitor_stop():
+        return jsonify(scheduler.monitor_stop())
+
+    @api.route("/monitor/squelch", methods=["GET"])
+    def monitor_squelch_get():
+        return jsonify(scheduler.get_squelch())
+
+    @api.route("/monitor/squelch", methods=["POST"])
+    def monitor_squelch_set():
+        data = request.get_json(force=True)
+        enabled = bool(data.get("enabled", True))
+        return jsonify(scheduler.set_squelch(enabled))
 
     @api.route("/calls")
     def calls():
@@ -378,6 +894,48 @@ def create_api(scheduler: Scheduler) -> Flask:
     @api.route("/passes")
     def passes():
         return jsonify(scheduler._upcoming_passes)
+
+    # ----- Recording -----
+    @api.route("/recording/start", methods=["POST"])
+    def recording_start():
+        data = request.get_json(silent=True) or {}
+        # Caller may pass freq/mode for the filename; otherwise we look up the
+        # current monitor job so the file is named after whatever's on air.
+        freq = data.get("freq")
+        mode = data.get("mode")
+        if not freq or not mode:
+            cf, cm = scheduler.current_freq_mode()
+            freq = freq or cf
+            mode = mode or cm
+        result = scheduler.recorder.start(freq, mode)
+        code = 400 if "error" in result else 200
+        return jsonify(result), code
+
+    @api.route("/recording/stop", methods=["POST"])
+    def recording_stop():
+        result = scheduler.recorder.stop()
+        code = 400 if "error" in result else 200
+        return jsonify(result), code
+
+    @api.route("/recording/status")
+    def recording_status():
+        return jsonify(scheduler.recorder.status())
+
+    @api.route("/recording/list")
+    def recording_list():
+        return jsonify(scheduler.recorder.list_files())
+
+    @api.route("/recording/disk")
+    def recording_disk():
+        return jsonify(scheduler.recorder.disk_usage())
+
+    @api.route("/recording/delete", methods=["POST"])
+    def recording_delete():
+        data = request.get_json(force=True)
+        filename = data.get("filename", "")
+        result = scheduler.recorder.delete_file(filename)
+        code = 400 if "error" in result else 200
+        return jsonify(result), code
 
     return api
 

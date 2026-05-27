@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings — Scanner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; }
+  header { background: #1a1d27; border-bottom: 1px solid #2d3148; padding: 12px 20px;
+           display: flex; align-items: center; gap: 24px; }
+  header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.05em; color: #a5b4fc; }
+  nav a { font-size: 0.85rem; color: #94a3b8; text-decoration: none; }
+  nav a.active { color: #e2e8f0; }
+  .main { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.08em; color: #64748b; margin-bottom: 12px; }
+  .disk-card {
+    background: #1a1d27; border: 1px solid #2d3148; border-radius: 8px;
+    padding: 14px 16px; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  .disk-card.warn { border-color: #b45309; background: #1c1410; }
+  .disk-stat { display: flex; flex-direction: column; gap: 2px; }
+  .disk-stat .label { font-size: 0.65rem; color: #64748b;
+                      text-transform: uppercase; letter-spacing: 0.08em; }
+  .disk-stat .val { font-size: 0.95rem; color: #e2e8f0;
+                    font-variant-numeric: tabular-nums; }
+  .disk-warn { color: #fbbf24; font-size: 0.82rem; flex: 1; min-width: 200px; }
+  .disk-bar {
+    flex: 1; min-width: 180px; height: 8px; background: #0f1117;
+    border-radius: 4px; overflow: hidden; border: 1px solid #2d3148;
+  }
+  .disk-bar-fill { height: 100%; background: #6366f1; transition: width .3s; }
+  .disk-bar-fill.warn { background: #f59e0b; }
+  .disk-bar-fill.danger { background: #dc2626; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem;
+          background: #1a1d27; border: 1px solid #2d3148; border-radius: 8px;
+          overflow: hidden; }
+  th { text-align: left; padding: 9px 12px; border-bottom: 1px solid #2d3148;
+       color: #475569; font-weight: 500; background: #14171f; }
+  td { padding: 9px 12px; border-bottom: 1px solid #1e2235; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  td.freq { font-family: 'JetBrains Mono', 'Courier New', monospace;
+            color: #fbbf24; font-weight: 600; white-space: nowrap; }
+  td.mode { color: #94a3b8; font-size: 0.74rem; }
+  td.filename { color: #64748b; font-size: 0.72rem; word-break: break-all; max-width: 240px; }
+  audio { width: 260px; height: 28px; }
+  .dl-link { color: #6366f1; text-decoration: none; font-size: 0.78rem; }
+  .dl-link:hover { text-decoration: underline; }
+  .del-btn {
+    background: transparent; border: 1px solid #5a3434; color: #f87171;
+    border-radius: 4px; padding: 4px 10px; font-size: 0.72rem; cursor: pointer;
+    transition: all .12s;
+  }
+  .del-btn:hover { background: #3a2424; }
+  .empty-state { color: #475569; padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Scanner</h1>
+  <nav>
+    <a href="/">Dashboard</a> &nbsp;
+    <a href="/gallery">Gallery</a> &nbsp;
+    <a href="/calls">Calls</a> &nbsp;
+    <a href="/recordings" class="active">Recordings</a> &nbsp;
+    <a href="/monitor">Monitor</a>
+  </nav>
+</header>
+
+<div class="main">
+  <h2>Stream Recordings</h2>
+
+  {% if disk %}
+  <div class="disk-card {{ 'warn' if disk.warn else '' }}" id="disk-card">
+    <div class="disk-stat">
+      <span class="label">Recordings</span>
+      <span class="val" id="disk-rec">{{ (disk.recordings_bytes // 1024) }} KB</span>
+    </div>
+    <div class="disk-stat">
+      <span class="label">Filesystem</span>
+      <span class="val" id="disk-pct">{{ disk.fs_pct_used }}% used</span>
+    </div>
+    <div class="disk-bar">
+      <div class="disk-bar-fill {{ 'danger' if disk.fs_pct_used > 90 else 'warn' if disk.warn else '' }}"
+           id="disk-bar-fill" style="width: {{ disk.fs_pct_used }}%"></div>
+    </div>
+    {% if disk.warn %}
+    <div class="disk-warn" id="disk-warn">⚠ /var/lib/scanner is over 80% full — consider deleting old recordings</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if recordings %}
+  <table>
+    <thead>
+      <tr>
+        <th style="width:130px">Captured</th>
+        <th style="width:110px">Freq</th>
+        <th style="width:55px">Mode</th>
+        <th style="width:75px">Size</th>
+        <th>Play</th>
+        <th>File</th>
+        <th style="width:140px">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="rec-tbody">
+      {% for r in recordings %}
+      <tr data-filename="{{ r.filename }}">
+        <td>{{ r.mtime_iso[11:19] }}<br><span style="color:#475569;font-size:0.7rem">{{ r.mtime_iso[:10] }}</span></td>
+        <td class="freq">{{ r.captured_freq or "—" }}</td>
+        <td class="mode">{{ r.captured_mode or "—" }}</td>
+        <td>{{ r.size_kb }} KB</td>
+        <td><audio controls preload="none" src="/recordings/file/{{ r.filename }}"></audio></td>
+        <td class="filename">{{ r.filename }}</td>
+        <td>
+          <a class="dl-link" href="/recordings/file/{{ r.filename }}" download>download</a>
+          &nbsp;
+          <button class="del-btn" onclick="deleteRec('{{ r.filename }}')">delete</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">No recordings yet. Use the Record button on the dashboard.</div>
+  {% endif %}
+</div>
+
+<script>
+'use strict';
+
+async function deleteRec(filename) {
+  if (!confirm(`Delete ${filename}?`)) return;
+  try {
+    const r = await fetch("/api/recording/delete", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({filename}),
+    });
+    const j = await r.json();
+    if (j.error) { alert("Delete failed: " + j.error); return; }
+    document.querySelector(`tr[data-filename="${CSS.escape(filename)}"]`)?.remove();
+    refreshDisk();
+  } catch (e) { alert("Request failed: " + e); }
+}
+
+async function refreshDisk() {
+  try {
+    const d = await (await fetch("/api/recording/disk")).json();
+    if (!d || d.error) return;
+    document.getElementById("disk-rec").textContent = Math.round(d.recordings_bytes / 1024) + " KB";
+    document.getElementById("disk-pct").textContent = d.fs_pct_used + "% used";
+    const fill = document.getElementById("disk-bar-fill");
+    if (fill) {
+      fill.style.width = d.fs_pct_used + "%";
+      fill.className = "disk-bar-fill" +
+        (d.fs_pct_used > 90 ? " danger" : d.warn ? " warn" : "");
+    }
+    const card = document.getElementById("disk-card");
+    if (card) card.classList.toggle("warn", d.warn);
+  } catch (e) {}
+}
+
+// Refresh disk usage every 30s in case a recording is growing in background.
+setInterval(refreshDisk, 30000);
+</script>
+</body>
+</html>
