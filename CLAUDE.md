@@ -47,23 +47,28 @@ when the discone is repositioned for 700 MHz.
 - systemd units enabled; services start on boot.
 
 **Hardware:**
-- Discone connected and in use for aviation AM (118–137 MHz). Antenna
-  swap to 137 MHz dipole needed for NOAA APT; manual swap for now.
+- Discone connected and in use for aviation AM (118–137 MHz). It works great
+  for aviation but is **confirmed unusable for NOAA APT** (see below) — a 137 MHz
+  QFH/turnstile (or at minimum a dipole) is required before APT can work.
 - Spectrum scan via `rtl_power` confirms a healthy aviation band with
   20+ active ARTCC/approach channels above the noise floor in a
   weekday-morning window. KCGI tower (125.525) traffic confirmed audible.
 
-**NOAA APT status (2026-05-31): captures still pure noise — RF, not software.**
-A test capture on a good 47° NOAA-15 pass, using the corrected rtl_fm recipe
-(`-s 60000 -F 9 -A fast -g 40`), produced flat noise: spectrogram had no 2400 Hz
-subcarrier and RMS amplitude was dead flat across the whole pass (no TCA bulge).
-The demod chain is mechanically correct; the satellite signal simply isn't
-reaching the receiver. Leading hypothesis: the discone is the wrong antenna for
-satellites (null near zenith, vertical pol vs NOAA's RHCP) — aviation AM at
-132 MHz works fine, so the feedline is healthy. An `rtl_power` Doppler-carrier
-sweep is scheduled for the 83.8° NOAA-18 overhead pass (2026-06-01 17:10Z) to
-decide antenna-vs-decode. **The `noaa_apt.py` recipe fix is intentionally NOT yet
-deployed** pending that result.
+**NOAA APT status (2026-06-01): CONFIRMED BLOCKER is the antenna, not software.**
+Two independent diagnostics settle it:
+- A 47° NOAA-15 capture (corrected recipe `-s 60000 -F 9 -A fast -g 40`) was
+  pure noise — flat spectrogram, RMS dead flat across the pass, no TCA bulge.
+- An `rtl_power` Doppler sweep over the **83.8° near-overhead NOAA-18 pass**
+  (best possible geometry, max gain 49.6) detected **no carrier at all**:
+  in-band power (±18 kHz around 137.9125 MHz) never rose above the edge-noise
+  floor — max band-SNR **0.02 dB**, flat the whole pass, zero Doppler drift.
+Two passes, two elevations, two gains, all flat. The receive chain is healthy
+(aviation AM at 132 MHz is solid daily), so the discone physically cannot hear a
+137 MHz LEO satellite even at zenith — its zenith null + vertical-vs-RHCP
+polarization mismatch is the cause. The `noaa_apt.py` recipe fix is validated and
+ready; it is **intentionally not deployed** because it cannot produce images until
+a proper 137 MHz RHCP antenna (QFH/turnstile) is installed. Raw artifacts +
+analysis: `/var/lib/scanner/aptpower/{sweep.csv,run.log}`.
 
 **Known stubs:**
 - `jobs/ais_poll.py` — Stage 6
@@ -82,8 +87,8 @@ from the Pi (likely a rate-limit ban from the old hammering); the polite client
 should fall off it and auto-refresh once celestrak responds. `gh` CLI is now
 installed and authenticated on the Pi (as `robertegardner`).
 
-**Next work:** resolve NOAA APT antenna (rtl_power result → likely QFH/turnstile
-or 137 dipole), then deploy the `noaa_apt.py` recipe fix; AIS poll job (Stage 6);
+**Next work:** install a 137 MHz QFH/turnstile (the confirmed NOAA APT blocker),
+then deploy the validated `noaa_apt.py` recipe fix; AIS poll job (Stage 6);
 antenna-switching automation (currently manual); MOSWIN listening when discone is
 on 700 MHz.
 
