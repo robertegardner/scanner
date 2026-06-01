@@ -53,14 +53,39 @@ when the discone is repositioned for 700 MHz.
   20+ active ARTCC/approach channels above the noise floor in a
   weekday-morning window. KCGI tower (125.525) traffic confirmed audible.
 
+**NOAA APT status (2026-05-31): captures still pure noise — RF, not software.**
+A test capture on a good 47° NOAA-15 pass, using the corrected rtl_fm recipe
+(`-s 60000 -F 9 -A fast -g 40`), produced flat noise: spectrogram had no 2400 Hz
+subcarrier and RMS amplitude was dead flat across the whole pass (no TCA bulge).
+The demod chain is mechanically correct; the satellite signal simply isn't
+reaching the receiver. Leading hypothesis: the discone is the wrong antenna for
+satellites (null near zenith, vertical pol vs NOAA's RHCP) — aviation AM at
+132 MHz works fine, so the feedline is healthy. An `rtl_power` Doppler-carrier
+sweep is scheduled for the 83.8° NOAA-18 overhead pass (2026-06-01 17:10Z) to
+decide antenna-vs-decode. **The `noaa_apt.py` recipe fix is intentionally NOT yet
+deployed** pending that result.
+
 **Known stubs:**
 - `jobs/ais_poll.py` — Stage 6
 - `jobs/acars_poll.py` — Stage 7
 - P25 trunked decoding integration via SDRTrunk works for EMS but
   requires discone repositioned to 700 MHz.
 
-**Next work:** AIS poll job (Stage 6), antenna-switching automation
-(currently manual), MOSWIN listening when discone is on 700 MHz.
+**TLE auto-refresh (fixed 2026-05-31, PR #1 `fix-tle-refresh`):** the pass
+watcher — the only caller that refreshes TLEs — used to start only under
+autopilot, so with `SCHEDULER_AUTOPILOT=false` the cache went stale and
+`/passes` was empty in manual mode. Now the watcher always runs (only NOAA job
+*queueing* is autopilot-gated), and `update_tles()` fetches the combined
+`GROUP=weather` file in one request with a 1-hour retry backoff instead of three
+per-object requests every 60s. NOTE: celestrak.org is currently IP-unreachable
+from the Pi (likely a rate-limit ban from the old hammering); the polite client
+should fall off it and auto-refresh once celestrak responds. `gh` CLI is now
+installed and authenticated on the Pi (as `robertegardner`).
+
+**Next work:** resolve NOAA APT antenna (rtl_power result → likely QFH/turnstile
+or 137 dipole), then deploy the `noaa_apt.py` recipe fix; AIS poll job (Stage 6);
+antenna-switching automation (currently manual); MOSWIN listening when discone is
+on 700 MHz.
 
 ## Where things will go
 
