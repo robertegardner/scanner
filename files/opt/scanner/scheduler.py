@@ -555,10 +555,13 @@ class Scheduler:
     def start(self) -> None:
         if self._config.autopilot:
             self._queue.push(EMSJob(self._config))
-            threading.Thread(target=self._pass_watcher, daemon=True, name="pass-watcher").start()
             log.info("Scheduler started (autopilot ON: EMS default + NOAA passes)")
         else:
             log.info("Scheduler started (autopilot OFF: idle until manually tuned)")
+        # Always run the pass watcher: it keeps TLEs fresh and populates the
+        # dashboard's upcoming-pass list in both modes. It only *queues* NOAA
+        # capture jobs when autopilot is on (see _pass_watcher).
+        threading.Thread(target=self._pass_watcher, daemon=True, name="pass-watcher").start()
         threading.Thread(target=self._loop, daemon=True, name="scheduler-loop").start()
 
     def _loop(self) -> None:
@@ -619,7 +622,10 @@ class Scheduler:
                 for p in passes[:10]
             ]
 
-            for p in passes:
+            # In manual mode we still predict + refresh TLEs above, but we do
+            # not auto-queue captures — the scheduler stays idle until a manual
+            # tune. Queueing resumes immediately if autopilot is flipped on.
+            for p in (passes if self._config.autopilot else []):
                 key = f"{p.satellite}|{p.aos.isoformat()}"
                 if key in queued:
                     continue
