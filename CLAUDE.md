@@ -49,12 +49,31 @@ would grab the radio's RSPdx-R2 without the libsdrplay_api.so perm restriction
   separate `/monitor` tuner page, `/calls` (EMS call log),
   `/gallery` (NOAA images).
 - Audio post-processing chain (ffmpeg) for the live monitor: AM uses
-  band-limit + agate squelch + compand + dynaudnorm + alimiter;
-  FM uses a gentler chain. All filters live in env vars
+  band-limit + **de-ring notches** + agate squelch + compand + dynaudnorm +
+  alimiter; FM uses a gentler chain. All filters live in env vars
   (`MONITOR_AUDIO_FILTER_AM`, `MONITOR_AUDIO_FILTER_FM`,
   `MONITOR_AUDIO_SQUELCH`) using a `{squelch}` placeholder so the
   dashboard Squelch toggle restarts the pipeline with/without the gate
-  (~2s gap; agate's threshold isn't a runtime command).
+  (~2s gap; agate's threshold isn't a runtime command). NOTE: env is read
+  once at scheduler **startup** (systemd `EnvironmentFile`), so editing a
+  filter needs `systemctl restart scanner-scheduler` + a re-tune, not just a
+  toggle.
+- **AM de-ring + weak-signal tuning (2026-06-02):** the Nooelec injects a
+  fixed digital birdie + harmonics into AM audio at **464 / 898 / 1797 / 2695
+  Hz** (898 Hz fundamental ×n). With the gate off, dynaudnorm pumped it ~15×
+  in dead air → a "high-pitched ring." Fix: narrow `equalizer` notches
+  (−26..−34 dB) **before** the gate, so the gate then judges clean silence and
+  its threshold could drop 0.06→0.015 (~−36 dBFS). The old 0.06 (≈−24 dBFS) sat
+  above both the birdie *and* quiet KCGI Tower voice, so squelch-on muted the
+  tower entirely — that fix made squelch-on pass tower traffic. **KCGI Tower is
+  RF/antenna-limited, not DSP-limited:** it's a low-power ground station that
+  arrives far weaker than airborne aircraft at the attic discone. Chasing its
+  loudness by lifting the compand low end (tried at -35/-22 and -45/-16) and by
+  raising RF gain (40→49) both made it *quieter* — boosting the noise floor
+  makes dynaudnorm/alimiter ride the whole signal down (same finding as the
+  2026-05-27 chain tuning). Compand left at the -22/-18 sweet spot; real fix is
+  antenna-side (reposition discone / dedicated airband antenna). **Tower presets
+  use RF gain 40** (dashboard `index.html`); `/api/monitor/tune` defaults to 20.
 - `SCHEDULER_AUTOPILOT=false` mode: scheduler stays idle, no EMS
   auto-start, no NOAA passes queued. The HTTP API stays up for manual
   tuning. Flip via `/etc/scanner/config.env` and restart.
