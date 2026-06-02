@@ -25,6 +25,20 @@ this project uses the spare Nooelec on a separate USB port.
 in daily use for VHF aviation AM listening on the discone; EMS scanning works
 when the discone is repositioned for 700 MHz.
 
+**2026-06-02 — MOSWIN P25 fully working + deployed (PR #2 `feat/moswin-p25-listen`):**
+The discone decodes MOSWIN at 769 MHz beautifully (+44 dB CC, ~0.1% sync loss).
+Key fixes/finds: control channel is **C4FM not CQPSK** (the old EMS playlist
+never decoded), on-air **NAC is 0x1CC** (not 0x1C3), op25 doesn't fit on disk so
+**SDRTrunk** is the decoder, **JMBE codec built** (`/var/lib/scanner/jmbe/jmbe.jar`)
+so P25 voice decodes. New **`/listen`** page = source switcher (MOSWIN default +
+aviation on demand) over Icecast, with **category sub-streams** (All/Fire/Law/…
+from `files/opt/scanner/p25/moswin_talkgroups.tsv` via `gen_aliases.py`),
+**talkgroup labels**, and a working **call log**. `SCHEDULER_EMS_DEFAULT=true`
+runs MOSWIN as the always-on background default (NOAA stays off). **Coexistence
+with the radio:** see the SDRplay note under "Hardware constraints" — SDRTrunk
+would grab the radio's RSPdx-R2 without the libsdrplay_api.so perm restriction
+(now in bootstrap.sh). Icecast `<sources>` raised 2→10 for the category mounts.
+
 **Implemented + live:**
 - Scheduler with priority preemption, EMS job (SDRTrunk), NOAA APT job,
   ManualJob (raw WAV capture), MonitorJob (live ffmpeg → Icecast stream).
