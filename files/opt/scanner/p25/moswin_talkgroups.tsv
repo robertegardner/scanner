@@ -1,0 +1,28 @@
+# Cape Girardeau County MOSWIN talkgroup labels.
+#
+# Source of the seed entries: RadioReference public wiki
+#   https://wiki.radioreference.com/index.php/Cape_Girardeau_County_(MO)
+# plus the MOSWIN forum talkgroup threads (2024-2026).
+#
+# !!! VERIFY against your own RadioReference account / live listening !!!
+# Some assignments are unconfirmed or have changed over time (e.g. the
+# Sheriff vs Jackson PD split on 4229/4237). This file is the source of
+# truth for labels — edit it freely, then regenerate the playlist aliases:
+#
+#   python3 /opt/scanner/p25/gen_aliases.py /var/lib/scanner/SDRTrunk/playlist/default.xml
+#   sudo systemctl restart scanner-scheduler
+#
+# Any talkgroup NOT listed here still records/streams and shows as its bare
+# number (the catch-all "Cape County All" alias). Add rows as you identify them.
+#
+# Format (tab-separated):   TGID <TAB> label <TAB> group
+# group is one of: Fire EMS Police Interop Local  (drives the color; free text ok)
+
+4206	CGPD Events	Police
+4229	Jackson PD	Police
+4237	Sheriff / Law Disp	Police
+4242	Fire Paging	Fire
+4244	SEMO Univ Police	Police
+4246	Region E HSRT	Interop
+4249	Fire Dispatch	Fire
+4250	CGPD SWAT	Police

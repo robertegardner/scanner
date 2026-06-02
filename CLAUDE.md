@@ -25,6 +25,20 @@ this project uses the spare Nooelec on a separate USB port.
 in daily use for VHF aviation AM listening on the discone; EMS scanning works
 when the discone is repositioned for 700 MHz.
 
+**2026-06-02 — MOSWIN P25 fully working + deployed (PR #2 `feat/moswin-p25-listen`):**
+The discone decodes MOSWIN at 769 MHz beautifully (+44 dB CC, ~0.1% sync loss).
+Key fixes/finds: control channel is **C4FM not CQPSK** (the old EMS playlist
+never decoded), on-air **NAC is 0x1CC** (not 0x1C3), op25 doesn't fit on disk so
+**SDRTrunk** is the decoder, **JMBE codec built** (`/var/lib/scanner/jmbe/jmbe.jar`)
+so P25 voice decodes. New **`/listen`** page = source switcher (MOSWIN default +
+aviation on demand) over Icecast, with **category sub-streams** (All/Fire/Law/…
+from `files/opt/scanner/p25/moswin_talkgroups.tsv` via `gen_aliases.py`),
+**talkgroup labels**, and a working **call log**. `SCHEDULER_EMS_DEFAULT=true`
+runs MOSWIN as the always-on background default (NOAA stays off). **Coexistence
+with the radio:** see the SDRplay note under "Hardware constraints" — SDRTrunk
+would grab the radio's RSPdx-R2 without the libsdrplay_api.so perm restriction
+(now in bootstrap.sh). Icecast `<sources>` raised 2→10 for the category mounts.
+
 **Implemented + live:**
 - Scheduler with priority preemption, EMS job (SDRTrunk), NOAA APT job,
   ManualJob (raw WAV capture), MonitorJob (live ffmpeg → Icecast stream).
@@ -250,7 +264,9 @@ This is sketched; actual interface evolves with the first implementation.
 **Frequency band:** Cape Girardeau County MOSWIN — **700 MHz, P25 Phase II**.
 NOT VHF as originally assumed. Sites 033/055/060 all operate in the
 769–771 MHz band (standard public safety 700 MHz).
-Control channel: 769.16875 MHz (Site 033 primary). NAC: 0x1C3 (451).
+Control channel: 769.16875 MHz (Site 033 primary). NAC: 0x1CC (460, confirmed
+on-air 2026-06-01; earlier 0x1C3 was wrong). Modulation: **C4FM** ("Normal") —
+confirmed on-air; CQPSK/LSM does NOT decode this CC (see docs/P25_BRINGUP.md).
 System ID: 1CE, WACN: BEE00. RadioReference: https://www.radioreference.com/db/sid/6847
 
 Cape County Private Ambulance (CCPA) still uses conventional 155.205 MHz
@@ -378,6 +394,17 @@ Same gotchas as the radio project:
 
 - **The Pi runs the radio project too.** Don't break that. The scanner
   must not crash, hang, or consume so much CPU that the radio stutters.
+- **SDRTrunk vs the radio's SDRplay.** SDRTrunk (the EMS/MOSWIN job) only uses
+  the Nooelec, but on startup it loads `libsdrplay_api.so` and enumerates the
+  radio's RSPdx-R2 — which knocks the radio off its dongle (`rx_fm: "Device has
+  been removed"`). `disabledTuners` stops SDRTrunk *streaming* the RSP but not
+  this enumeration, and SDRTrunk has no path-override hook. Fix (in bootstrap.sh):
+  restrict `/usr/local/lib/libsdrplay_api.so*` to `root:radio 750` so SDRTrunk
+  (user `scanner`) can't load it and skips the RSP, while the radio (user `radio`,
+  group `radio`) keeps it. With this in place MOSWIN + the radio run
+  simultaneously on their separate dongles. **Re-apply after any SDRplay API
+  reinstall** (it resets the perms to 644 and the conflict returns). Without it,
+  enabling always-on MOSWIN (`SCHEDULER_EMS_DEFAULT=true`) takes the radio down.
 - **USB bandwidth.** The Pi 5 has two USB 3.0 ports. dx-R2 on one,
   Nooelec on the other. Pi 5's USB 3.0 is 5 Gbps; either dongle alone
   is well under 30 Mbps. No contention.

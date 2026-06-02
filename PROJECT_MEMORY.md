@@ -12,13 +12,24 @@ every time.
 > than none — it makes Claude confidently wrong. If a conversation ends with
 > "we decided X" or "I finished Y", that is the signal to update.
 
-Last meaningful update (2026-06-01): dx-R2 received, installed, and the radio
-migrated to it (RTL-SDR → SDRplay); AM long-wire built and live on dx-R2
-Antenna C (BNC adapter arrived) — currently troubleshooting high RF
-interference on the AM path; FM working on Antenna A; FM stereo / HD Radio
-backburnered; scanner project past skeleton (stages 0–5 live); MOSWIN P25
-confirmed to be 700 MHz (not VHF); scanner antenna-switch (discone/dipole)
-designed with a bench test protocol.
+Last meaningful update (2026-06-02): **MOSWIN P25 proven on the discone and fully
+deployed** (scanner PR #2). The discone hears the 769 MHz control channel at
++44 dB and decodes it at ~0.1% sync loss. Key finds: control channel is **C4FM**
+not CQPSK (old EMS playlist never decoded), on-air **NAC is 0x1CC** not 0x1C3,
+op25 won't fit on the SD card so **SDRTrunk** is the decoder, **JMBE codec built**
+so P25 voice decodes. New **`/listen`** web page = source switcher (MOSWIN default
++ aviation on demand) over Icecast, with **category sub-streams**, **talkgroup
+labels**, and a working **call log**. MOSWIN runs always-on in the background
+(`SCHEDULER_EMS_DEFAULT=true`; NOAA stays off). **It now coexists with the radio:**
+SDRTrunk was kicking the radio off the SDRplay by enumerating it on startup —
+fixed by restricting `libsdrplay_api.so` to the `radio` group (in bootstrap.sh)
+so SDRTrunk skips the RSP; both run simultaneously. The **antenna relay is
+deferred** — the discone covers both aviation (118–137) and MOSWIN (769), so
+software source-switching replaces it for those two. Full record:
+`notes/2026-06-02-moswin-p25-deploy.md`.
+
+Prior (2026-06-01): dx-R2 deployed, radio migrated to SDRplay; AM long-wire live
+but fighting local RFI; scanner stages 0–5 live; MOSWIN confirmed 700 MHz.
 
 ---
 

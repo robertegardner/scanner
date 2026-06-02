@@ -4,6 +4,7 @@ Serves the dashboard and gallery. All live data proxies to the scheduler
 running on localhost:SCHEDULER_PORT.
 """
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -20,6 +21,31 @@ NOAA_DATA_DIR = Path(os.environ.get("NOAA_DATA_DIR", "/var/lib/scanner/noaa"))
 ICECAST_STREAM_URL = os.environ.get("ICECAST_STREAM_URL", "")
 MONITOR_STREAM_URL = os.environ.get("MONITOR_STREAM_URL", "")
 MONITOR_DEFAULT_DURATION_S = int(os.environ.get("MONITOR_DEFAULT_DURATION_S", "600"))
+TALKGROUPS_TSV = Path(os.environ.get("TALKGROUPS_TSV", "/opt/scanner/p25/moswin_talkgroups.tsv"))
+
+
+def _moswin_categories() -> list[dict]:
+    """Category live-stream mounts, derived from the groups in the talkgroups
+    TSV (same source gen_aliases.py uses). 'All' = the full /ems.mp3 feed; each
+    group has its own /ems-<slug>.mp3 mount. URLs mirror ICECAST_STREAM_URL."""
+    cats = [{"name": "All", "slug": "all", "url": ICECAST_STREAM_URL}]
+    groups: list[str] = []
+    try:
+        for line in TALKGROUPS_TSV.read_text().splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[0].strip().isdigit() and parts[2].strip():
+                g = parts[2].strip()
+                if g not in groups:
+                    groups.append(g)
+    except OSError:
+        pass
+    for g in groups:
+        slug = re.sub(r"[^a-z0-9]+", "-", g.lower()).strip("-")
+        url = re.sub(r"ems\.mp3$", f"ems-{slug}.mp3", ICECAST_STREAM_URL) if ICECAST_STREAM_URL else ""
+        cats.append({"name": g, "slug": slug, "url": url})
+    return cats
 
 
 def _sched(path: str, method: str = "GET", json: dict | None = None) -> dict | list:
@@ -82,6 +108,20 @@ def monitor_page():
                            stream_url=MONITOR_STREAM_URL)
 
 
+@app.route("/listen")
+def listen_page():
+    """Source switcher: listen to any Nooelec tunable (MOSWIN P25 default,
+    aviation AM on demand) — all on the one shared SDR via the scheduler."""
+    status = _sched("/status")
+    return render_template(
+        "listen.html",
+        status=status,
+        moswin_stream_url=ICECAST_STREAM_URL,
+        monitor_stream_url=MONITOR_STREAM_URL,
+        categories=_moswin_categories(),
+    )
+
+
 @app.route("/recordings")
 def recordings_page():
     recordings = _sched("/recording/list")
@@ -126,6 +166,13 @@ def api_monitor_tune():
 @app.route("/api/monitor/stop", methods=["POST"])
 def api_monitor_stop():
     return jsonify(_sched("/monitor/stop", method="POST"))
+
+
+@app.route("/api/source/moswin", methods=["POST"])
+def api_source_moswin():
+    result = _sched("/source/moswin", method="POST")
+    code = 400 if isinstance(result, dict) and "error" in result else 200
+    return jsonify(result), code
 
 
 @app.route("/api/monitor/squelch", methods=["GET"])

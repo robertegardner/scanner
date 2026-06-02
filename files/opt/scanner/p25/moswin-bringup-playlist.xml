@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MOSWIN P25 discone bring-up playlist (SDRTrunk v4).
+
+  Manual diagnostic ONLY. This is intentionally NOT the production EMS playlist
+  and is NOT used by scheduler.py / jobs/ems_scanner.py. run-bringup.sh copies
+  this into an isolated SDRTrunk home so the live EMS config is never touched.
+
+  Differences from the production EMS playlist:
+    - NO <stream> / Icecast broadcast (this bring-up does not stream)
+    - NO broadcastChannel alias id (nothing to broadcast to)
+    - event loggers enabled (CALL_EVENT + DECODED_MESSAGE) so the decode can be
+      inspected from files in <home>/event_logs/ without a GUI
+
+  Control channel: MOSWIN Site 033 primary = 769.16875 MHz = 769168750 Hz.
+  Modulation C4FM ("Normal") -- PROVEN correct on air (CQPSK/LSM gives ~98%
+  sync loss; C4FM gives ~0.1%). run-bringup.sh can rewrite freq/modulation/gain.
+  Confirmed on-air identity: NAC 0x1CC, System 0x1CE, WACN 0xBEE00, P25 Phase II.
+-->
+<playlist version="4">
+  <alias color="-16711936" group="" list="MOSWIN" name="Cape County All">
+    <id type="talkgroupRange" protocol="APCO25" min="0" max="65535"/>
+  </alias>
+  <channel enabled="true" order="0" name="MOSWIN Bringup CC">
+    <alias_list_name>MOSWIN</alias_list_name>
+    <event_log_configuration>
+      <logger>CALL_EVENT</logger>
+      <logger>DECODED_MESSAGE</logger>
+    </event_log_configuration>
+    <source_configuration type="sourceConfigTuner" frequency="769168750" source_type="TUNER"/>
+    <aux_decode_configuration/>
+    <decode_configuration type="decodeConfigP25Phase1" modulation="C4FM" traffic_channel_pool_size="10" ignore_data_calls="true"/>
+    <record_configuration/>
+  </channel>
+</playlist>

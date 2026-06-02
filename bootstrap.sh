@@ -102,6 +102,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. Keep SDRTrunk off the radio's SDRplay
+# ---------------------------------------------------------------------------
+# SDRTrunk only needs the Nooelec (RTL2832), but on startup it loads
+# libsdrplay_api.so and enumerates the RSPdx-R2 — which yanks the device out
+# from under the radio project (rx_fm: "Device has been removed"). disabledTuners
+# stops SDRTrunk *streaming* the RSP but not this enumeration. SDRTrunk loads the
+# lib by name/path with no override hook, but skips the RSP gracefully if it
+# can't read the lib. So we restrict the lib to the radio's group: radio (group
+# radio) keeps it, scanner (SDRTrunk) is denied -> the two coexist on their
+# separate dongles. Re-run this after any SDRplay API reinstall (it resets perms).
+SDRPLAY_LIB=$(readlink -f /usr/local/lib/libsdrplay_api.so 2>/dev/null || true)
+if [[ -n "$SDRPLAY_LIB" && -f "$SDRPLAY_LIB" ]] && getent group radio >/dev/null; then
+  chown root:radio "$SDRPLAY_LIB"
+  chmod 750 "$SDRPLAY_LIB"
+  log "Restricted $SDRPLAY_LIB to root:radio 750 (SDRTrunk won't grab the SDRplay)"
+else
+  log "SDRplay lib or 'radio' group not present — skipping SDRplay restriction"
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Configuration files
 # ---------------------------------------------------------------------------
 if [[ ! -f /etc/scanner/config.env ]]; then

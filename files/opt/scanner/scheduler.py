@@ -90,7 +90,9 @@ class Config:
     monitor_default_duration_s: int
     recording_source_url: str
     autopilot: bool
+    ems_default: bool
     squelch_default: bool
+    talkgroups_tsv: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -110,7 +112,9 @@ class Config:
             monitor_default_duration_s=int(os.environ.get("MONITOR_DEFAULT_DURATION_S", "600")),
             recording_source_url=os.environ.get("RECORDING_SOURCE_URL", "http://localhost:8000/monitor.mp3"),
             autopilot=os.environ.get("SCHEDULER_AUTOPILOT", "true").lower() in ("1", "true", "yes", "on"),
+            ems_default=os.environ.get("SCHEDULER_EMS_DEFAULT", "false").lower() in ("1", "true", "yes", "on"),
             squelch_default=os.environ.get("MONITOR_SQUELCH_DEFAULT", "true").lower() in ("1", "true", "yes", "on"),
+            talkgroups_tsv=os.environ.get("TALKGROUPS_TSV", "/opt/scanner/p25/moswin_talkgroups.tsv"),
         )
 
 
@@ -161,6 +165,38 @@ _VALID_FREQ = re.compile(r"^\d+(\.\d+)?[kMG]?$")
 _VALID_MODE = {"fm", "am", "usb", "lsb", "wbfm", "raw"}
 
 MONITOR_ICECAST_URL = os.environ.get("MONITOR_ICECAST_URL", "")
+
+# SDRTrunk recording filenames look like:
+#   20260601_224359T-Cape_County_MOSWIN__TO_4229_FROM_91986.mp3
+_CALL_NAME_RE = re.compile(r"_TO_(\d+)_FROM_(\d+)")
+
+# Cached TGID -> label map, reloaded when moswin_talkgroups.tsv changes on disk.
+_TG_LABELS_CACHE: dict = {"path": None, "mtime": -1, "map": {}}
+
+
+def _talkgroup_labels(path: str) -> dict:
+    """Load TGID->label from the tab-separated talkgroups file (cached by mtime)."""
+    try:
+        mtime = os.stat(path).st_mtime
+    except OSError:
+        return {}
+    cache = _TG_LABELS_CACHE
+    if cache["path"] == path and cache["mtime"] == mtime:
+        return cache["map"]
+    mapping: dict = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2 and parts[0].strip().isdigit():
+                    mapping[parts[0].strip()] = parts[1].strip()
+    except OSError:
+        return cache["map"]
+    cache.update(path=path, mtime=mtime, map=mapping)
+    return mapping
 
 
 class ManualJob(Job):
@@ -556,8 +592,12 @@ class Scheduler:
         if self._config.autopilot:
             self._queue.push(EMSJob(self._config))
             log.info("Scheduler started (autopilot ON: EMS default + NOAA passes)")
+        elif self._config.ems_default:
+            self._queue.push(EMSJob(self._config))
+            log.info("Scheduler started (EMS default ON, NOAA off: MOSWIN runs in "
+                     "background, yields to manual tunes and resumes after)")
         else:
-            log.info("Scheduler started (autopilot OFF: idle until manually tuned)")
+            log.info("Scheduler started (idle until manually tuned)")
         # Always run the pass watcher: it keeps TLEs fresh and populates the
         # dashboard's upcoming-pass list in both modes. It only *queues* NOAA
         # capture jobs when autopilot is on (see _pass_watcher).
@@ -592,9 +632,12 @@ class Scheduler:
                     self._monitor_job = None
 
             if job.should_requeue():
-                # When autopilot is off we deliberately suppress EMS's self-requeue
-                # so the scheduler stays idle between manual tunes.
-                if self._config.autopilot or not isinstance(job, EMSJob):
+                # EMS self-requeues only when it's meant to be the background
+                # default (autopilot or ems_default) — so after a manual aviation
+                # tune ends, MOSWIN resumes. In plain manual mode EMS does not
+                # requeue, leaving the scheduler idle between tunes.
+                if (self._config.autopilot or self._config.ems_default
+                        or not isinstance(job, EMSJob)):
                     self._queue.push(job)
 
     def _pass_watcher(self) -> None:
@@ -780,6 +823,30 @@ class Scheduler:
             self._monitor_job = None
         return {"status": "nothing to stop"}
 
+    def start_moswin(self) -> dict:
+        """Switch the SDR to the MOSWIN P25 source (EMS / SDRTrunk job).
+
+        EMS is the lowest-priority job, so it can't preempt a running monitor on
+        its own — we stop the current monitor/manual job and queue EMS for the
+        loop to pick up next. A NOAA capture in progress (priority 5) is left
+        alone. Used by the /listen source switcher; works with autopilot off.
+        """
+        with self._lock:
+            current = self._current_job
+        if isinstance(current, EMSJob):
+            return {"status": "already moswin", "source": "moswin"}
+        if isinstance(current, NOAAJob):
+            return {"error": "NOAA pass in progress; try again after it ends"}
+        self._queue.remove_by_name("monitor")
+        self._queue.remove_by_name("ems_scanner")
+        with self._lock:
+            self._monitor_job = None
+        self._queue.push(EMSJob(self._config))
+        # EMS (priority 1) can't preempt a monitor/manual via push_job, so do it.
+        if isinstance(current, (MonitorJob, ManualJob)):
+            self._preempt_signal.set()
+        return {"status": "queued", "source": "moswin"}
+
     def status(self) -> dict:
         with self._lock:
             current = self._current_job
@@ -797,19 +864,32 @@ class Scheduler:
         }
 
     def recent_calls(self, limit: int = 50) -> list[dict]:
-        """Scan EMS recordings directory for recent call files."""
+        """Scan EMS recordings directory for recent call files.
+
+        SDRTrunk names recordings with the raw talkgroup/radio numbers
+        (...__TO_<tgid>_FROM_<radio>.mp3), so we map the TGID to a friendly
+        label here from moswin_talkgroups.tsv (the same file gen_aliases.py
+        uses). Unknown TGIDs fall back to "TG <n>".
+        """
         recordings = Path(self._config.ems_recordings_dir)
         if not recordings.exists():
             return []
+        labels = _talkgroup_labels(self._config.talkgroups_tsv)
         files = sorted(recordings.rglob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
         calls = []
         for f in files[:limit]:
             mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            m = _CALL_NAME_RE.search(f.name)
+            tgid = m.group(1) if m else None
+            radio = m.group(2) if m else None
             calls.append({
                 "ts": mtime.isoformat(timespec="seconds"),
                 "filename": f.name,
                 "path": str(f.relative_to(recordings)),
                 "size_kb": round(f.stat().st_size / 1024),
+                "tgid": tgid,
+                "radio": radio,
+                "talkgroup": labels.get(tgid) or (f"TG {tgid}" if tgid else "—"),
             })
         return calls
 
@@ -877,6 +957,12 @@ def create_api(scheduler: Scheduler) -> Flask:
     @api.route("/monitor/stop", methods=["POST"])
     def monitor_stop():
         return jsonify(scheduler.monitor_stop())
+
+    @api.route("/source/moswin", methods=["POST"])
+    def source_moswin():
+        result = scheduler.start_moswin()
+        code = 400 if "error" in result else 200
+        return jsonify(result), code
 
     @api.route("/monitor/squelch", methods=["GET"])
     def monitor_squelch_get():
