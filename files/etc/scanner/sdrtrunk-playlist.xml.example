@@ -83,7 +83,7 @@
          per-call audio. (TRAFFIC_MBE_CALL_SEQUENCE only wrote raw .mbe frames.) -->
     <record_configuration/>
   </channel>
-  <stream type="icecastHTTPConfiguration" xmlns:wstxns1="http://www.w3.org/2001/XMLSchema-instance" wstxns1:type="ICECAST_HTTP" public="false" sample_rate="8000" user_name="source" bitrate="32" channels="1" mount_point="/ems.mp3" inline="false" delay="0" host="localhost" name="MOSWIN Live" enabled="true" port="8000" password="CHANGE_ME" maximum_recording_age="0">
+  <stream type="icecastHTTPConfiguration" xmlns:wstxns1="http://www.w3.org/2001/XMLSchema-instance" wstxns1:type="ICECAST_HTTP" public="false" sample_rate="8000" user_name="source" bitrate="32" channels="1" mount_point="/ems.mp3" inline="false" delay="0" host="localhost" name="MOSWIN Live" enabled="true" port="8000" password="CHANGE_ME" maximum_recording_age="600000">
     <format>MP3</format>
   </stream>
 </playlist>
