@@ -93,6 +93,7 @@ class Config:
     ems_default: bool
     squelch_default: bool
     talkgroups_tsv: str
+    transcripts_dir: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -115,6 +116,7 @@ class Config:
             ems_default=os.environ.get("SCHEDULER_EMS_DEFAULT", "false").lower() in ("1", "true", "yes", "on"),
             squelch_default=os.environ.get("MONITOR_SQUELCH_DEFAULT", "true").lower() in ("1", "true", "yes", "on"),
             talkgroups_tsv=os.environ.get("TALKGROUPS_TSV", "/opt/scanner/p25/moswin_talkgroups.tsv"),
+            transcripts_dir=os.environ.get("TRANSCRIPTS_DIR", "/var/lib/scanner/transcripts"),
         )
 
 
@@ -875,6 +877,7 @@ class Scheduler:
         if not recordings.exists():
             return []
         labels = _talkgroup_labels(self._config.talkgroups_tsv)
+        transcripts = Path(self._config.transcripts_dir) / "calls"
         files = sorted(recordings.rglob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
         calls = []
         for f in files[:limit]:
@@ -882,14 +885,21 @@ class Scheduler:
             m = _CALL_NAME_RE.search(f.name)
             tgid = m.group(1) if m else None
             radio = m.group(2) if m else None
+            rel = f.relative_to(recordings)
+            side = transcripts / rel.with_suffix(".txt")
+            try:
+                transcript = side.read_text(encoding="utf-8").strip() or None
+            except OSError:
+                transcript = None
             calls.append({
                 "ts": mtime.isoformat(timespec="seconds"),
                 "filename": f.name,
-                "path": str(f.relative_to(recordings)),
+                "path": str(rel),
                 "size_kb": round(f.stat().st_size / 1024),
                 "tgid": tgid,
                 "radio": radio,
                 "talkgroup": labels.get(tgid) or (f"TG {tgid}" if tgid else "—"),
+                "transcript": transcript,
             })
         return calls
 

@@ -3,6 +3,7 @@
 Serves the dashboard and gallery. All live data proxies to the scheduler
 running on localhost:SCHEDULER_PORT.
 """
+import json
 import os
 import re
 import sys
@@ -22,6 +23,8 @@ ICECAST_STREAM_URL = os.environ.get("ICECAST_STREAM_URL", "")
 MONITOR_STREAM_URL = os.environ.get("MONITOR_STREAM_URL", "")
 MONITOR_DEFAULT_DURATION_S = int(os.environ.get("MONITOR_DEFAULT_DURATION_S", "600"))
 TALKGROUPS_TSV = Path(os.environ.get("TALKGROUPS_TSV", "/opt/scanner/p25/moswin_talkgroups.tsv"))
+TRANSCRIPTS_DIR = Path(os.environ.get("TRANSCRIPTS_DIR", "/var/lib/scanner/transcripts"))
+TRANSCRIBE_STATE_PATH = Path(os.environ.get("TRANSCRIBE_STATE_PATH", "/run/scanner/transcribe.json"))
 
 
 def _moswin_categories() -> list[dict]:
@@ -55,6 +58,39 @@ def _sched(path: str, method: str = "GET", json: dict | None = None) -> dict | l
         return resp.json()
     except requests.RequestException as e:
         return {"error": str(e)}
+
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _transcript_days() -> list[str]:
+    """Dates (newest first) that have a transcript log."""
+    try:
+        days = [p.stem for p in TRANSCRIPTS_DIR.glob("*.jsonl") if _DATE_RE.match(p.stem)]
+    except OSError:
+        days = []
+    return sorted(days, reverse=True)
+
+
+def _read_transcript_day(date: str, limit: int = 1000) -> list[dict]:
+    """Parse one day's JSONL transcript log, newest first."""
+    if not _DATE_RE.match(date or ""):
+        return []
+    path = TRANSCRIPTS_DIR / f"{date}.jsonl"
+    entries: list[dict] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except ValueError:
+                continue
+    except OSError:
+        return []
+    entries.reverse()
+    return entries[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +156,14 @@ def listen_page():
         monitor_stream_url=MONITOR_STREAM_URL,
         categories=_moswin_categories(),
     )
+
+
+@app.route("/transcript")
+def transcript_page():
+    days = _transcript_days()
+    date = request.args.get("date") or (days[0] if days else "")
+    entries = _read_transcript_day(date) if date else []
+    return render_template("transcript.html", entries=entries, days=days, date=date)
 
 
 @app.route("/recordings")
@@ -195,6 +239,26 @@ def api_calls():
 @app.route("/api/passes")
 def api_passes():
     return jsonify(_sched("/passes"))
+
+
+@app.route("/api/transcribe")
+def api_transcribe():
+    """Latest live caption (written by scanner-transcribe to tmpfs)."""
+    try:
+        return jsonify(json.loads(TRANSCRIBE_STATE_PATH.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return jsonify({"text": "", "source": "", "context": "", "updated": 0})
+
+
+@app.route("/api/transcript")
+def api_transcript():
+    date = request.args.get("date", "")
+    limit = int(request.args.get("limit", "1000"))
+    if not date:
+        days = _transcript_days()
+        date = days[0] if days else ""
+    return jsonify({"date": date, "days": _transcript_days(),
+                    "entries": _read_transcript_day(date, limit) if date else []})
 
 
 @app.route("/api/recording/start", methods=["POST"])

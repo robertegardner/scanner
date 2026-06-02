@@ -46,8 +46,8 @@ would grab the radio's RSPdx-R2 without the libsdrplay_api.so perm restriction
 - Flask web UI on port 8081: dashboard with status/queue/activity,
   Aviation + Cape County preset banks, live monitor stream player,
   Record button + `/recordings` MP3 library with disk-usage warning,
-  separate `/monitor` tuner page, `/calls` (EMS call log),
-  `/gallery` (NOAA images).
+  separate `/monitor` tuner page, `/calls` (EMS call log, now with a
+  transcript column), `/transcript` (transcript log), `/gallery` (NOAA images).
 - Audio post-processing chain (ffmpeg) for the live monitor: AM uses
   band-limit + **de-ring notches** + agate squelch + compand + dynaudnorm +
   alimiter; FM uses a gentler chain. All filters live in env vars
@@ -77,6 +77,19 @@ would grab the radio's RSPdx-R2 without the libsdrplay_api.so perm restriction
 - `SCHEDULER_AUTOPILOT=false` mode: scheduler stays idle, no EMS
   auto-start, no NOAA passes queued. The HTTP API stays up for manual
   tuning. Flip via `/etc/scanner/config.env` and restart.
+- **Transcription** (`scanner-transcribe.service`, PR #5): Whisper captions +
+  EMS call text. The Pi has no GPU, so it **reuses the radio's remote
+  faster-whisper host** (`WHISPER_URL=http://gti-ai.srvr:8088`, same token as
+  the radio's `captions.env`); degrades gracefully when that box is offline.
+  Each SDRTrunk call MP3 is transcribed whole → sidecar under
+  `/var/lib/scanner/transcripts/calls/` that `recent_calls()` shows on `/calls`;
+  the live monitor stream is window-captioned. All lines append to
+  `transcripts/YYYY-MM-DD.jsonl` (→ `/transcript`); the latest live caption is
+  mirrored to `/run/scanner/transcribe.json` (→ rolling overlay on `/listen`
+  and `/monitor`). The call loop runs **newest-first** so live calls caption
+  immediately while older calls backfill. NOTE: EMS recordings actually live at
+  `/var/lib/scanner/SDRTrunk/recordings` (per `EMS_RECORDINGS_DIR`), not the
+  `/var/lib/scanner/ems/recordings` code default.
 - systemd units enabled; services start on boot.
 
 **Hardware:**

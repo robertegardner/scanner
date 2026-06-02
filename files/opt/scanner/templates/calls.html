@@ -22,6 +22,8 @@
   tr:last-child td { border-bottom: none; }
   audio { width: 240px; height: 28px; }
   .empty-state { color: #475569; padding: 40px 0; text-align: center; }
+  .transcript { color: #cbd5e1; font-style: italic; max-width: 340px; }
+  .transcript.none { color: #3b4252; font-style: normal; }
 </style>
 </head>
 <body>
@@ -32,6 +34,7 @@
     <a href="/">Dashboard</a> &nbsp;
     <a href="/listen">Listen</a> &nbsp;
     <a href="/calls" class="active">Calls</a> &nbsp;
+    <a href="/transcript">Transcript</a> &nbsp;
     <a href="/gallery">Gallery</a> &nbsp;
     <a href="/recordings">Recordings</a> &nbsp;
     <a href="/monitor">Monitor</a>
@@ -51,6 +54,7 @@
         <th>From</th>
         <th>Size</th>
         <th>Play</th>
+        <th>Transcript</th>
       </tr>
     </thead>
     <tbody>
@@ -62,6 +66,11 @@
         <td style="color:#94a3b8;font-variant-numeric:tabular-nums">{{ c.radio or '—' }}</td>
         <td>{{ c.size_kb }} KB</td>
         <td><audio controls preload="none" src="/recordings/ems/{{ c.path }}"></audio></td>
+        {% if c.transcript %}
+        <td class="transcript">“{{ c.transcript }}”</td>
+        {% else %}
+        <td class="transcript none">—</td>
+        {% endif %}
       </tr>
       {% endfor %}
     </tbody>
