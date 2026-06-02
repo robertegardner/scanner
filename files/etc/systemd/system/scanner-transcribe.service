@@ -1,0 +1,24 @@
+[Unit]
+Description=Scanner transcription orchestrator (Whisper captions + EMS call text)
+After=network-online.target scanner-scheduler.service icecast2.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=scanner
+Group=scanner
+WorkingDirectory=/opt/scanner
+EnvironmentFile=/etc/scanner/config.env
+# /run/scanner for the live caption state file (tmpfs, transient).
+RuntimeDirectory=scanner
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=/opt/scanner/venv/bin/python transcribe.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scanner-transcribe
+
+[Install]
+WantedBy=multi-user.target
