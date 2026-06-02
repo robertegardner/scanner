@@ -1,18 +1,18 @@
-# MOSWIN P25 — Discone Bring-up Report
+# MOSWIN P25 — Design, Bring-up & Deployment
 
-**Date:** 2026-06-01
-**Question:** Is the discone good enough at 769 MHz to justify building the
-antenna relay, by proving it can receive **and decode** the Cape Girardeau
-County MOSWIN P25 Phase II system on the Nooelec?
+Scanner project (`robertegardner/scanner`). This is the single source of truth
+for MOSWIN P25 reception: the original design intent, the bring-up evidence, and
+what is now deployed. (Supersedes the earlier separate plan + report docs.)
 
-**Answer: GO.** The discone receives the MOSWIN control channel at +44 dB over
-noise and decodes it essentially perfectly (~0.1% sync loss), with live group
-calls, full system identity, and clear (unencrypted) voice grants. See evidence
-below.
+**Goal of the bring-up:** prove the discone can receive *and decode* the Cape
+Girardeau County MOSWIN P25 Phase II system straight into the Nooelec, as the
+go/no-go gate before investing in any antenna relay.
 
-This was a manual, interactive bring-up. It is **not** wired into the scheduler,
-the `ems_scanner` job, or systemd, and does **not** stream to Icecast. The radio
-project (RSPdx-R2) was never touched.
+**Outcome: GO — and now live.** The discone hears the 769 MHz control channel at
+**+44 dB** over noise and decodes it at **~0.1% sync loss**, with live clear
+(unencrypted) group calls. P25 voice now decodes to audio (JMBE built) and streams
+via Icecast, selectable from a new `/listen` web page. The radio project
+(RSPdx-R2) was never touched throughout.
 
 ---
 
@@ -20,45 +20,57 @@ project (RSPdx-R2) was never touched.
 
 | Item | Result |
 |------|--------|
-| Control-channel carrier (rtl_power) | **+44.3 dB** over noise floor at 769.16875 MHz |
-| Decode lock quality (C4FM) | 3401 msgs, **4 sync losses (~0.1%)** |
-| NAC | **0x1CC** (460) — *not* 0x1C3 as documented; see note |
-| System ID | **0x1CE** (462) ✓ matches MOSWIN |
-| WACN | **0xBEE00** (781824) ✓ matches MOSWIN |
+| Control-channel carrier (rtl_power) | **+44.3 dB** over a flat noise floor at 769.16875 MHz |
+| Decode lock quality | 3401 msgs, **4 sync losses (~0.1%)** |
+| **Modulation** | **C4FM** ("Normal") — *not* CQPSK/LSM (CQPSK ≈ 98% sync loss) |
+| NAC | **0x1CC** (460) — corrected from the previously-documented 0x1C3 |
+| System ID | **0x1CE** (462) ✓ · WACN **0xBEE00** (781824) ✓ |
 | System type | **P25 Phase II** (TDMA sync + TDMA IDEN updates present) |
-| Talkgroups heard | 4229, 4241, 4244 (live, ~3 min window) |
-| Encryption | **None** — service options `[VOICE, REGISTRATION]`, calls in the clear |
-| Decoded audio (WAV) | **Not produced** — JMBE IMBE codec not installed (see below) |
-| Correct modulation | **C4FM**, *not* CQPSK |
+| Talkgroups heard | 4229, 4241, 4244 (live, ~3 min window), all **in the clear** |
+| Voice channels | 769.66875 / 769.91875 / 770.16875 MHz |
+| Audio | **Works** — JMBE codec built; SDRTrunk: `IMBE CODEC successfully loaded` |
+| Decoder | **SDRTrunk** (op25 was the plan but doesn't fit on disk — see below) |
 
 ---
 
-## Two surprises worth recording
+## How it's wired now (deployed)
 
-1. **op25 could not be used — it does not fit on disk.** op25 (boatbod) must be
-   compiled against GNU Radio + dev headers. On this Debian 13 (trixie) box,
-   `gnuradio-dev` pulls the full `gnuradio` metapackage (Qt5, gnome-terminal,
-   companion) — **~1.49 GB installed, 475 packages** — and `/` had only **823 MB
-   free** (88% full) on the single SD card, with no external storage and no room
-   to grow the partition. There is no headless GNU Radio dev package in apt.
-   Installing it would have pushed root toward ~99% on the card that also runs
-   the live radio project, risking the "don't break the radio" constraint.
-   **No GNU Radio install or op25 clone was attempted.** The decode was done
-   with **SDRTrunk**, which is already installed and proven for P25 here.
+A `/listen` page (Flask UI, :8081) is a **source switcher on the one shared
+Nooelec** — no relay, no antenna change, because the discone covers both bands:
 
-2. **MOSWIN's control channel is C4FM, not CQPSK.** The production EMS playlist
-   (`/var/lib/scanner/SDRTrunk/playlist/default.xml`) decodes the channel as
-   `modulation="CQPSK"`. With CQPSK the decoder showed **~98% SYNC LOSS** and
-   captured only a handful of valid frames. Switching to **C4FM** dropped sync
-   loss to ~0.1% and produced continuous clean decode. This strongly suggests
-   the production EMS channel has effectively never decoded MOSWIN — worth fixing
-   separately (outside this bring-up's scope).
+- **MOSWIN P25** (default, auto-starts) → SDRTrunk → Icecast `/ems.mp3`, with live
+  talkgroup + recent-calls display.
+- **Aviation AM** (118–137 MHz, on demand) → rtl_fm monitor → Icecast `/monitor.mp3`,
+  preset bank + direct tune.
+
+Switching sources preempts on the single SDR via the scheduler
+(`Scheduler.start_moswin()` / `/source/moswin`; EMS is the lowest-priority job so
+switching back to MOSWIN stops the monitor and queues EMS). Works with
+`SCHEDULER_AUTOPILOT=false`. **NOAA is intentionally left offline** — the discone
+physically can't hear 137 MHz LEO sats (see the NOAA APT notes / CLAUDE.md).
 
 ---
 
-## (a) Signal level — rtl_power sweep
+## System parameters (corrected, from on-air decode + RadioReference sid/6847)
 
-Command (discone direct to Nooelec, scheduler stopped):
+| Field | Value |
+|-------|-------|
+| System | MOSWIN, Cape Girardeau County, **P25 Phase II** |
+| Control channel | **769.16875 MHz** (Site 033 primary) |
+| **Modulation** | **C4FM** ("Normal") |
+| **NAC** | **0x1CC** (460) — confirmed on air; *not* 0x1C3 |
+| System ID | **0x1CE** (462) · WACN **0xBEE00** |
+| Sites | 033 / 055 / 060, all in **769–771 MHz** |
+| Encryption | none observed — listed talkgroups in the clear |
+
+(Cape County Private Ambulance on 155.205 MHz conventional is VHF and out of
+scope here — it needs the dipole, not the discone.)
+
+---
+
+## Bring-up evidence
+
+### (a) Signal level — rtl_power sweep
 
 ```
 rtl_power -f 769.0M:771.0M:2k -g 30 -i 5 -1 sweep_769_771.csv
@@ -73,122 +85,116 @@ rtl_power -f 769.0M:771.0M:2k -g 30 -i 5 -1 sweep_769_771.csv
 
 The 770.16875 MHz carrier later showed up as an active FDMA **voice channel** in
 the decode — independent confirmation the sweep was seeing real MOSWIN traffic.
-Artifacts: `/var/lib/scanner/p25bringup/sweep_769_771.csv`, `rtlpower.log`.
+Dongle: `0: Nooelec NESDR SMArt v5, SN 22012952` (RTL2832U + R820T).
 
-Dongle: `0: Nooelec NESDR SMArt v5, SN 22012952` (RTL2832U + R820T), device 0.
-
-## (b) Final working decoder configuration
-
-Decoder: **SDRTrunk 0.6.1**, headless, run in a fully isolated home so the live
-EMS config is untouched and the radio's RSPdx-R2 stays disabled.
+### (b) Decoder configuration
 
 | Parameter | Value |
 |-----------|-------|
+| Decoder | SDRTrunk 0.6.1, headless |
 | Control channel | 769.16875 MHz (769168750 Hz) |
-| **Modulation** | **C4FM** (`Normal`) — CQPSK/LSM does **not** work |
+| **Modulation** | **C4FM** — CQPSK/LSM does **not** work here |
 | Decode type | `decodeConfigP25Phase1`, `traffic_channel_pool_size=10` |
-| R820T master gain | `GAIN_327` (32.7 dB) — flawless; gain was not the issue |
+| R820T master gain | `GAIN_327` (32.7 dB) — flawless; gain was never the issue |
 | PPM | auto (Nooelec has a TCXO) |
 
-Reproduce (Nooelec free / scheduler stopped):
-
+Reproduce the isolated bring-up (Nooelec free / scheduler stopped):
 ```bash
 sudo systemctl stop scanner-scheduler
 sudo -u scanner /srv/scanner/files/opt/scanner/p25/run-bringup.sh 240
-#                                       runtime_s ^      gain ^ (default GAIN_327)
-# override modulation: MOD=CQPSK sudo -u scanner ... run-bringup.sh 240 GAIN_327
+#   args: runtime_s [GAIN_xxx];  MOD=CQPSK env var to override modulation
 ```
+`files/opt/scanner/p25/run-bringup.sh` copies the live `tuner_configuration.json`
+(so the RSPdx-R2 stays in `disabledTuners`) and runs SDRTrunk in an isolated
+`-Duser.home` with no Icecast stream — it never disturbs the production config.
 
-Tracked config: `files/opt/scanner/p25/{moswin-bringup-playlist.xml,
-run-bringup.sh}`. The script copies the live `tuner_configuration.json` (so the
-RSPdx-R2 stays in `disabledTuners`), overrides modulation/gain, and launches
-SDRTrunk with `-Duser.home` pointed at an isolated home —
-`/var/lib/scanner/p25bringup/sthome/` — with no Icecast stream.
-
-## (c) System identity — confirmed
-
-From `NET_STATUS_BCAST` / `RFSS_STATUS_BCST` (decoded cleanly, repeatedly):
+### (c) System identity — confirmed
 
 ```
 NAC:460/x1CC  NET_STATUS_BCAST WACN:781824/xBEE00
               RFSS_STATUS_BCST SYSTEM:462/x1CE  RFSS:3  SITE:7
 ```
+Numerous `TDMA_SYNC_BCST` / `IDEN_UPDATE_TDMA` confirm **Phase II**. The on-air
+**NAC is 0x1CC**, not the 0x1C3 previously recorded — now corrected everywhere.
 
-- **System ID 0x1CE** and **WACN 0xBEE00** match the documented MOSWIN values
-  in `CLAUDE.md` exactly.
-- **NAC reads 0x1CC (460)**, but `CLAUDE.md` records `NAC 0x1C3 (451)`. The
-  on-air value is 0x1CC. Either the doc has a transcription error or 769.16875
-  is a different site than "Site 033"; the decode is unambiguous. **Action: fix
-  the NAC in CLAUDE.md / RadioReference notes.**
-- Numerous `TDMA_SYNC_BCST` and `IDEN_UPDATE_TDMA` messages confirm **Phase II**.
+### (d) Talkgroups + encryption
 
-## (d) Talkgroups + encryption
-
-Live group calls captured in a ~3-minute window (`c4fm_call_events.log`):
-
-| Talkgroup | Grants | Voice channel(s) | Encryption |
-|-----------|-------:|------------------|------------|
+| Talkgroup | Grants | Voice channel | Encryption |
+|-----------|-------:|---------------|------------|
 | 4229 | 43 | 770.16875 MHz | clear |
 | 4241 | 23 | 769.66875 MHz | clear |
-| 4244 | 2 | 769.91875 MHz | clear |
+| 4244 |  2 | 769.91875 MHz | clear |
 
-Source radio IDs heard: 87208, 88072, 91986. Location registrations to groups
-6708/6711/3981 also decoded.
+Source radios heard: 87208, 88072, 91986. **No `ENCRYPTED` markers** anywhere;
+grant service options read `[VOICE, REGISTRATION]`. (Labels show "Cape County All"
+only because the bring-up alias is a catch-all 0–65535 range; real labels need the
+RadioReference list. The numeric TGIDs are real.)
 
-**Encryption: none observed.** Zero `ENCRYPTED` markers across all call events and
-decoded messages; grant service options read `[VOICE, REGISTRATION]` with no
-encryption flag. Consistent with `CLAUDE.md`'s note that Cape County talkgroups
-are in the clear. (Talkgroup *labels* show as "Cape County All" only because the
-bring-up alias is a catch-all 0–65535 range; real labels need the RadioReference
-list. The numeric TGIDs above are real.)
+### (e) Decoded audio — works (JMBE built)
 
-## (e) Decoded audio — not produced (codec gap, not an antenna issue)
+P25 voice needs the JMBE IMBE/AMBE codec, which is patent-encumbered and not in
+apt. It was built from source (`dsheirer/jmbe` v1.0.9) and installed to
+`/var/lib/scanner/jmbe/jmbe.jar`, with SDRTrunk's library-path preference set
+(`path.jmbe.library.1.0.0` under `/var/lib/scanner/.java/.userPrefs`). SDRTrunk now
+logs `IMBE CODEC successfully loaded - P25-1 audio will be available`, so clear
+calls decode to audio and stream to Icecast.
 
-No WAV was produced. SDRTrunk logs:
-
-```
-JMBE audio conversion library, IMBE CODEC not loaded - P25-1 audio will NOT be available
-```
-
-Only `jmbe-api-1.0.0.jar` (the interface) is present; the **JMBE IMBE/AMBE codec
-implementation is not installed** (it is patent-encumbered and must be built from
-source). This is a pure software gap, **independent of the discone** — and it
-means the production EMS Icecast stream has no voice either. op25 ships its own
-software IMBE decoder (would have given audio with no JMBE), but op25 doesn't fit
-on disk (see above).
-
-To get an actual voice WAV later: build JMBE once, point SDRTrunk's
-`jmbe library path` preference at it, re-run the bring-up — clear calls on the
-TGIDs above will then decode to audio. ~15-minute follow-up; flagged, not done.
-
-## (f) GO / NO-GO recommendation
-
-**GO — build the relay.** Evidence:
-
-- The discone hears the 769 MHz control channel at **+44 dB** over a flat noise
-  floor — not marginal, one of the strongest signals on the band.
-- It decodes that channel at **~0.1% sync loss** with the correct C4FM setting —
-  full system identity (NAC/System/WACN), continuous TSBKs, and **live group
-  calls with real talkgroup IDs on real voice channels**.
-- Calls are **in the clear**, so the system is genuinely listenable once the
-  JMBE codec is added.
-
-This is the opposite of the NOAA APT situation (where the discone heard *nothing*
-at 137 MHz). At 769 MHz the discone is an excellent antenna, so dedicating it to
-the 700 MHz P25 job via the relay — and using a separate VHF antenna for the
-131–162 MHz cluster — is well justified.
-
-### Follow-ups (separate from the relay decision)
-1. **Fix the production EMS playlist**: change `modulation` CQPSK → **C4FM**, or
-   it will keep failing to decode MOSWIN.
-2. **Correct the NAC** in `CLAUDE.md`: on-air is **0x1CC**, not 0x1C3.
-3. **Install the JMBE codec** if voice audio / Icecast streaming is wanted.
-4. The op25 path needs more disk than the SD card has — revisit only if op25 is
-   specifically required (e.g. add storage or a lighter GNU Radio).
+Build notes (disk was the recurring obstacle on the ~93%-full SD card): built
+entirely in `/dev/shm` (RAM) because gradle wouldn't fit on disk, using gradle
+8.10.2 (the repo's 7.4 can't run on the only installable JDK, 21). The build-only
+JDK was removed afterward — SDRTrunk uses its own bundled JRE.
 
 ---
 
-### Artifacts (`/var/lib/scanner/p25bringup/`)
+## What was changed / deployed in the repo
+
+- **EMS playlist** modulation `CQPSK → C4FM` (repo template + live
+  `/var/lib/scanner/SDRTrunk/playlist/default.xml`).
+- **NAC** corrected to `0x1CC` in `CLAUDE.md` and the playlist template.
+- **scheduler.py**: `start_moswin()` + `/source/moswin` route.
+- **app.py**: `/listen` page + `/api/source/moswin` proxy.
+- **templates/listen.html**: the source switcher.
+- **files/opt/scanner/p25/**: tracked SDRTrunk bring-up playlist + runner.
+- **JMBE** built out-of-tree (not vendored) and wired into SDRTrunk.
+
+---
+
+## On the antenna relay (revised conclusion)
+
+The bring-up was framed as the gate for building a discone↔dipole relay. Two
+findings change that calculus:
+
+1. **The discone covers both jobs in use.** It decodes MOSWIN at 769 MHz *and*
+   aviation AM at 118–137 MHz. So aviation + MOSWIN coexist via **software
+   source-switching on the one antenna** (the `/listen` page) — **no relay
+   required** for them.
+2. The relay's remaining value is only to add a *band-optimized* antenna later
+   (e.g. a 137 MHz RHCP QFH for NOAA APT, which the discone can't do at all, or a
+   tuned 700 MHz gain antenna). It is **not** a prerequisite for listening to
+   MOSWIN or aviation today.
+
+**Net: GO on MOSWIN reception (excellent), but the relay is deferred** — it's a
+future enhancement for adding dedicated antennas, not a blocker.
+
+---
+
+## Decoder choice — op25 (planned) vs SDRTrunk (used)
+
+The original plan was **op25** (boatbod fork): headless-native with an HTTP
+dashboard, light on the Pi, clean to integrate as a managed child process, and
+actively maintained against GNU Radio 3.10. Sound reasoning — but op25 must be
+compiled against GNU Radio + dev headers, and on this Debian 13 box
+`gnuradio-dev` pulls the full `gnuradio` metapackage (Qt5, companion):
+**~1.49 GB installed / 475 packages** vs **~0.8 GB free** on the single SD card,
+with no headless GR dev package and no room to grow. Installing it risked pushing
+root to ~99% on the card the radio also runs from. So op25 was **not** installed;
+SDRTrunk (already present and proven for P25 here) did the decode. Revisit op25
+only if storage is added or a lighter GNU Radio path appears.
+
+---
+
+## Artifacts (`/var/lib/scanner/p25bringup/`)
+
 - `sweep_769_771.csv`, `rtlpower.log` — rtl_power signal sweep
 - `c4fm_decoded_messages.log` — winning C4FM decode (NAC/System/WACN/IDEN)
 - `c4fm_call_events.log` — live group calls / talkgroups / registrations
