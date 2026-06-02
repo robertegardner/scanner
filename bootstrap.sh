@@ -189,8 +189,13 @@ visudo -c -f /etc/sudoers.d/scanner
 log "Installing systemd units"
 cp "$REPO/files/etc/systemd/system/scanner-scheduler.service" /etc/systemd/system/
 cp "$REPO/files/etc/systemd/system/scanner-ui.service" /etc/systemd/system/
+cp "$REPO/files/etc/systemd/system/scanner-usb-oc-watch.service" /etc/systemd/system/
+cp "$REPO/files/etc/systemd/system/scanner-usb-oc-watch.timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable scanner-scheduler.service scanner-ui.service
+# USB over-current watcher (see CLAUDE.md "Hardware constraints"): logs new kernel
+# over-current events so we can tell whether usb_max_current_enable=1 holds.
+systemctl enable scanner-usb-oc-watch.timer
 
 # ---------------------------------------------------------------------------
 # 11. Initial deploy
