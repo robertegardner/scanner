@@ -1,0 +1,9 @@
+[Unit]
+Description=Scanner USB over-current watcher (logs new kernel over-current events)
+Documentation=file:///srv/scanner/CLAUDE.md
+
+[Service]
+Type=oneshot
+# Runs as root: -k journal reads need privilege; appends to /var/lib/scanner.
+ExecStart=/opt/scanner/scripts/usb_oc_watch.sh
+Nice=10

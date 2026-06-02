@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the scanner USB over-current watcher every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Catch up if the Pi was asleep/off when a run was due.
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
