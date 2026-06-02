@@ -209,8 +209,8 @@
   <div id="caption" style="display:none;margin-top:10px;padding:10px 14px;
        background:#11151f;border:1px solid #2d3148;border-radius:8px;
        color:#cbd5e1;font-style:italic;line-height:1.4;min-height:1.2em">
-    <span style="font-style:normal;font-size:0.65rem;text-transform:uppercase;
-          letter-spacing:0.06em;color:#64748b;margin-right:8px">caption</span>
+    <span id="caption-label" style="font-style:normal;font-size:0.65rem;
+          text-transform:uppercase;letter-spacing:0.06em;color:#64748b;margin-right:8px">caption</span>
     <span id="caption-text"></span>
   </div>
   <div class="footer"><a href="/transcript">transcript log</a> · <a href="/">dashboard</a></div>
@@ -506,8 +506,9 @@ async function pollCaption() {
   try {
     const c = await (await fetch('/api/transcribe')).json();
     const box = document.getElementById('caption');
-    const fresh = c.text && (Date.now()/1000 - (c.updated || 0) < 25);
+    const fresh = c.text && (Date.now()/1000 - (c.updated || 0) < 30);
     if (fresh) {
+      document.getElementById('caption-label').textContent = c.context || 'caption';
       document.getElementById('caption-text').textContent = c.text;
       box.style.display = 'block';
     } else {

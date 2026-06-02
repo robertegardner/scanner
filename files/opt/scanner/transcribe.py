@@ -50,6 +50,9 @@ WINDOW_SEC   = int(os.environ.get("TRANSCRIBE_WINDOW_SEC", "8"))
 # transcribe calls newer than this many hours (0 disables the cap = transcribe
 # everything). Going-forward calls are always covered.
 CALL_MAX_AGE_H = float(os.environ.get("TRANSCRIBE_CALL_MAX_AGE_H", "6"))
+# A transcribed call only updates the live /listen caption overlay if it's this
+# fresh — keeps backlog drains from flashing stale text as the "live" caption.
+LIVE_CAPTION_MAX_AGE_SEC = 120
 SAMPLE_RATE  = 16000
 BYTES_PER_SAMPLE = 2
 STATUS_POLL_SEC  = 3
@@ -177,9 +180,10 @@ def call_watch_loop() -> None:
         if time.time() - labels_loaded > 300:
             labels = _talkgroup_labels()
             labels_loaded = time.time()
-        # Oldest-first so a backlog drains in chronological order.
+        # Newest-first: a live call gets captioned immediately; the older
+        # backlog backfills (for /calls + the log) only after the fresh ones.
         files = sorted(EMS_RECORDINGS_DIR.rglob("*.mp3"),
-                       key=lambda p: p.stat().st_mtime)
+                       key=lambda p: p.stat().st_mtime, reverse=True)
         now = time.time()
         for f in files:
             side = sidecar_for(f)
@@ -205,6 +209,10 @@ def call_watch_loop() -> None:
                 tgid = m.group(1) if m else None
                 ctx = labels.get(tgid) or (f"TG {tgid}" if tgid else "EMS")
                 append_log("ems", ctx, text, ts=datetime.fromtimestamp(mtime))
+                # Surface genuinely-live calls as the /listen caption overlay
+                # (skip backlog so old calls don't hijack the "live" caption).
+                if now - mtime < LIVE_CAPTION_MAX_AGE_SEC:
+                    write_caption("ems", ctx, text)
                 _log(f"[call] {ctx}: {text}")
 
 
