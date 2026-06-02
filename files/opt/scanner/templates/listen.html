@@ -76,6 +76,13 @@
   .call .csz { font-size:.68rem; color:var(--text-faint); }
   .empty { color:var(--text-faint); font-size:.8rem; padding:.6rem .3rem; }
 
+  /* Category sub-stream selector */
+  .cats { display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:.7rem; }
+  .cat { background:var(--bg-button); border:1px solid transparent; border-radius:999px;
+    padding:.35rem .8rem; cursor:pointer; font-size:.8rem; color:var(--text); transition:all .12s; }
+  .cat:hover { background:var(--bg-button-hover); }
+  .cat.active { border-color:var(--green); background:#1c2a22; color:var(--green); font-weight:600; }
+
   /* Aviation presets */
   .presets { display:grid; grid-template-columns:repeat(2,1fr); gap:.5rem; }
   .preset { background:var(--bg-button); border:1px solid transparent; border-radius:8px;
@@ -173,6 +180,8 @@
       <span>NAC <b>0x1CC</b></span><span>SYS <b>0x1CE</b></span>
       <span>WACN <b>0xBEE00</b></span><span>P25 <b>Phase II</b></span>
     </div>
+    <div class="label">Live feed — pick a category</div>
+    <div class="cats" id="cats"></div>
     <div class="label">Recent calls — click to replay</div>
     <div class="calls" id="calls"><div class="empty">Waiting for calls…</div></div>
   </div>
@@ -228,8 +237,10 @@
 
 const MOSWIN_URL  = {{ moswin_stream_url|tojson }};
 const MONITOR_URL = {{ monitor_stream_url|tojson }};
+const CATEGORIES  = {{ categories|tojson }};   // [{name,slug,url}], [0] = All
 const LS_VOL = 'scanner-listen.vol';
 const LS_SQ  = 'scanner-listen.sq';
+const LS_CAT = 'scanner-listen.cat';
 
 // Aviation presets — confirmed-active Cape Girardeau air-band channels.
 const PRESETS = [
@@ -245,6 +256,7 @@ const $ = id => document.getElementById(id);
 const audio = $('audio');
 
 let source = 'moswin';       // 'moswin' | 'aviation'
+let category = CATEGORIES[0] || {name:'All', url:MOSWIN_URL};  // active MOSWIN sub-stream
 let activePreset = null;
 let isPlaying = false;
 let busy = false;            // switching/tuning in progress
@@ -257,7 +269,25 @@ let toastTimer;
 function showToast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show');
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2800); }
 
-function streamUrl(){ return source==='moswin' ? MOSWIN_URL : MONITOR_URL; }
+function streamUrl(){ return source==='moswin' ? ((category && category.url) || MOSWIN_URL) : MONITOR_URL; }
+
+// MOSWIN category sub-streams (All / Fire / Law / EMS / ...). Switching just
+// re-points the player at that mount — same SDRTrunk, no scheduler change.
+function renderCats(){
+  const box=$('cats'); box.innerHTML='';
+  CATEGORIES.forEach(c=>{
+    const b=document.createElement('button');
+    b.className='cat'+(category && category.name===c.name?' active':'');
+    b.textContent=c.name;
+    b.addEventListener('click',()=>selectCat(c));
+    box.appendChild(b);
+  });
+}
+function selectCat(c){
+  category=c; localStorage.setItem(LS_CAT, c.name); renderCats();
+  if(source==='moswin'){ $('band-display').textContent='P25 · '+c.name;
+    if(isPlaying){ pauseAudio(); playAudio(); } }
+}
 
 function showPanel(){
   $('panel-moswin').classList.toggle('show', source==='moswin');
@@ -316,7 +346,7 @@ async function waitForJob(jobName, match, maxMs=22000, pollMs=700){
 // ---- source switching ----
 async function selectMoswin(){
   if(busy) return; busy=true;
-  source='moswin'; activePreset=null; showPanel();
+  source='moswin'; activePreset=null; showPanel(); renderCats();
   if(isPlaying) pauseAudio();
   setStreamLed('amber'); setStatus('Switching to MOSWIN P25…'); lcdMoswin(null);
   try{
@@ -439,7 +469,10 @@ $('vol').addEventListener('input', e=>{ audio.volume=e.target.value/100; localSt
 // ---- init ----
 const sv=localStorage.getItem(LS_VOL); if(sv!=null){ $('vol').value=sv; $('vol').dispatchEvent(new Event('input')); }
 squelchOn = localStorage.getItem(LS_SQ)==='1'; setSqBtn();
+const savedCat = localStorage.getItem(LS_CAT);
+if(savedCat){ const c=CATEGORIES.find(x=>x.name===savedCat); if(c) category=c; }
 renderPresets();
+renderCats();
 
 (async ()=>{
   let cur=null;
