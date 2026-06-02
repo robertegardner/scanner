@@ -380,6 +380,17 @@ Same gotchas as the radio project:
 
 - **The Pi runs the radio project too.** Don't break that. The scanner
   must not crash, hang, or consume so much CPU that the radio stutters.
+- **SDRTrunk vs the radio's SDRplay.** SDRTrunk (the EMS/MOSWIN job) only uses
+  the Nooelec, but on startup it loads `libsdrplay_api.so` and enumerates the
+  radio's RSPdx-R2 — which knocks the radio off its dongle (`rx_fm: "Device has
+  been removed"`). `disabledTuners` stops SDRTrunk *streaming* the RSP but not
+  this enumeration, and SDRTrunk has no path-override hook. Fix (in bootstrap.sh):
+  restrict `/usr/local/lib/libsdrplay_api.so*` to `root:radio 750` so SDRTrunk
+  (user `scanner`) can't load it and skips the RSP, while the radio (user `radio`,
+  group `radio`) keeps it. With this in place MOSWIN + the radio run
+  simultaneously on their separate dongles. **Re-apply after any SDRplay API
+  reinstall** (it resets the perms to 644 and the conflict returns). Without it,
+  enabling always-on MOSWIN (`SCHEDULER_EMS_DEFAULT=true`) takes the radio down.
 - **USB bandwidth.** The Pi 5 has two USB 3.0 ports. dx-R2 on one,
   Nooelec on the other. Pi 5's USB 3.0 is 5 Gbps; either dongle alone
   is well under 30 Mbps. No contention.
