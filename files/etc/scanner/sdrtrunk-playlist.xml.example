@@ -3,7 +3,8 @@
 
   RadioReference source: https://www.radioreference.com/db/sid/6847
   System: Missouri Statewide Wireless Interoperable Network (MOSWIN)
-  System ID: 1CE  |  WACN: BEE00  |  NAC: 0x1C3 (decimal 451)
+  System ID: 1CE  |  WACN: BEE00  |  NAC: 0x1CC (decimal 460, confirmed on-air 2026-06-01)
+  Modulation: C4FM ("Normal") — confirmed on-air. CQPSK/LSM does NOT decode this CC.
 
   Cape Girardeau sites (all 700 MHz — NOT VHF):
     Site 033 (Cape Girardeau 700)   CC: 769.16875, 769.41875 MHz
@@ -34,7 +35,7 @@
     <event_log_configuration/>
     <source_configuration type="sourceConfigTuner" frequency="769168750" source_type="TUNER"/>
     <aux_decode_configuration/>
-    <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK" traffic_channel_pool_size="10" ignore_data_calls="true"/>
+    <decode_configuration type="decodeConfigP25Phase1" modulation="C4FM" traffic_channel_pool_size="10" ignore_data_calls="true"/>
     <record_configuration>
       <recorder>TRAFFIC_MBE_CALL_SEQUENCE</recorder>
     </record_configuration>

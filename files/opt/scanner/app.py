@@ -82,6 +82,19 @@ def monitor_page():
                            stream_url=MONITOR_STREAM_URL)
 
 
+@app.route("/listen")
+def listen_page():
+    """Source switcher: listen to any Nooelec tunable (MOSWIN P25 default,
+    aviation AM on demand) — all on the one shared SDR via the scheduler."""
+    status = _sched("/status")
+    return render_template(
+        "listen.html",
+        status=status,
+        moswin_stream_url=ICECAST_STREAM_URL,
+        monitor_stream_url=MONITOR_STREAM_URL,
+    )
+
+
 @app.route("/recordings")
 def recordings_page():
     recordings = _sched("/recording/list")
@@ -126,6 +139,13 @@ def api_monitor_tune():
 @app.route("/api/monitor/stop", methods=["POST"])
 def api_monitor_stop():
     return jsonify(_sched("/monitor/stop", method="POST"))
+
+
+@app.route("/api/source/moswin", methods=["POST"])
+def api_source_moswin():
+    result = _sched("/source/moswin", method="POST")
+    code = 400 if isinstance(result, dict) and "error" in result else 200
+    return jsonify(result), code
 
 
 @app.route("/api/monitor/squelch", methods=["GET"])

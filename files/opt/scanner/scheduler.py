@@ -780,6 +780,30 @@ class Scheduler:
             self._monitor_job = None
         return {"status": "nothing to stop"}
 
+    def start_moswin(self) -> dict:
+        """Switch the SDR to the MOSWIN P25 source (EMS / SDRTrunk job).
+
+        EMS is the lowest-priority job, so it can't preempt a running monitor on
+        its own — we stop the current monitor/manual job and queue EMS for the
+        loop to pick up next. A NOAA capture in progress (priority 5) is left
+        alone. Used by the /listen source switcher; works with autopilot off.
+        """
+        with self._lock:
+            current = self._current_job
+        if isinstance(current, EMSJob):
+            return {"status": "already moswin", "source": "moswin"}
+        if isinstance(current, NOAAJob):
+            return {"error": "NOAA pass in progress; try again after it ends"}
+        self._queue.remove_by_name("monitor")
+        self._queue.remove_by_name("ems_scanner")
+        with self._lock:
+            self._monitor_job = None
+        self._queue.push(EMSJob(self._config))
+        # EMS (priority 1) can't preempt a monitor/manual via push_job, so do it.
+        if isinstance(current, (MonitorJob, ManualJob)):
+            self._preempt_signal.set()
+        return {"status": "queued", "source": "moswin"}
+
     def status(self) -> dict:
         with self._lock:
             current = self._current_job
@@ -877,6 +901,12 @@ def create_api(scheduler: Scheduler) -> Flask:
     @api.route("/monitor/stop", methods=["POST"])
     def monitor_stop():
         return jsonify(scheduler.monitor_stop())
+
+    @api.route("/source/moswin", methods=["POST"])
+    def source_moswin():
+        result = scheduler.start_moswin()
+        code = 400 if "error" in result else 200
+        return jsonify(result), code
 
     @api.route("/monitor/squelch", methods=["GET"])
     def monitor_squelch_get():

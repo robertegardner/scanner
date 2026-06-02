@@ -250,7 +250,9 @@ This is sketched; actual interface evolves with the first implementation.
 **Frequency band:** Cape Girardeau County MOSWIN — **700 MHz, P25 Phase II**.
 NOT VHF as originally assumed. Sites 033/055/060 all operate in the
 769–771 MHz band (standard public safety 700 MHz).
-Control channel: 769.16875 MHz (Site 033 primary). NAC: 0x1C3 (451).
+Control channel: 769.16875 MHz (Site 033 primary). NAC: 0x1CC (460, confirmed
+on-air 2026-06-01; earlier 0x1C3 was wrong). Modulation: **C4FM** ("Normal") —
+confirmed on-air; CQPSK/LSM does NOT decode this CC (see docs/P25_BRINGUP.md).
 System ID: 1CE, WACN: BEE00. RadioReference: https://www.radioreference.com/db/sid/6847
 
 Cape County Private Ambulance (CCPA) still uses conventional 155.205 MHz

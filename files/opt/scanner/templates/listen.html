@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Listen — Scanner</title>
+<style>
+  :root {
+    --bg-deep:#0a0a0c; --bg-panel:#15161a; --bg-raise:#1f2126;
+    --bg-button:#2a2d33; --bg-button-hover:#353941; --line:#2c2e34;
+    --amber:#ffae3a; --amber-dim:#6b4818; --green:#6df09b; --red:#f06d6d;
+    --blue:#7aa2f7; --text:#e6e6e6; --text-dim:#888; --text-faint:#555; --accent:#2563eb;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  body { background:radial-gradient(circle at 50% -20%, #1a1c22 0%, var(--bg-deep) 70%);
+    color:var(--text); font-family:system-ui,-apple-system,sans-serif; min-height:100vh; }
+  header { background:#1a1d27; border-bottom:1px solid #2d3148; padding:12px 20px;
+    display:flex; align-items:center; gap:24px; }
+  header h1 { font-size:1.1rem; font-weight:600; letter-spacing:.05em; color:#a5b4fc; }
+  nav a { font-size:.85rem; color:#94a3b8; text-decoration:none; }
+  nav a.active { color:#e2e8f0; }
+
+  .wrap { display:flex; justify-content:center; align-items:flex-start; padding:2rem 1rem 3rem; }
+  .tuner { width:100%; max-width:560px;
+    background:linear-gradient(180deg,#1a1c22 0%, var(--bg-panel) 100%);
+    border:1px solid var(--line); border-radius:18px;
+    box-shadow:0 20px 60px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04);
+    padding:1.25rem; display:flex; flex-direction:column; gap:1rem; }
+
+  /* Source tabs */
+  .sources { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+  .src { background:var(--bg-button); border:1px solid transparent; border-radius:10px;
+    padding:.85rem .5rem; cursor:pointer; text-align:center; transition:all .12s; }
+  .src:hover { background:var(--bg-button-hover); }
+  .src .stitle { display:block; font-size:1rem; font-weight:700; color:var(--text); }
+  .src .ssub { display:block; margin-top:.2rem; font-size:.68rem; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:.08em; }
+  .src.active.moswin  { border-color:var(--green); background:#1c2a22; }
+  .src.active.aviation{ border-color:var(--amber); background:#2c2520; }
+
+  /* LCD */
+  .lcd { background:linear-gradient(180deg,#0d0e10 0%, #16181c 100%); border:1px solid #000;
+    border-radius:10px; padding:1rem 1.25rem; box-shadow:inset 0 2px 8px rgba(0,0,0,.7); min-height:118px; }
+  .lcd-row { display:flex; justify-content:space-between; align-items:baseline; }
+  .lcd-band { color:var(--amber); font-family:'Courier New',monospace; font-size:.85rem;
+    font-weight:700; letter-spacing:.12em; text-shadow:0 0 8px var(--amber); }
+  .lcd-status { display:flex; gap:.65rem; align-items:center; font-size:.7rem; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:.1em; }
+  .led { width:7px; height:7px; border-radius:50%; background:#333; display:inline-block;
+    transition:background .15s, box-shadow .15s; }
+  .led.on { background:var(--green); box-shadow:0 0 8px var(--green); }
+  .led.amber { background:var(--amber); box-shadow:0 0 8px var(--amber); }
+  .led.err { background:var(--red); box-shadow:0 0 8px var(--red); }
+  .lcd-freq { color:var(--amber); font-family:'Courier New',monospace; font-weight:700;
+    font-size:2.8rem; letter-spacing:.04em; line-height:1; margin:.45rem 0 .2rem;
+    text-shadow:0 0 12px rgba(255,174,58,.6); font-variant-numeric:tabular-nums; }
+  .lcd-freq .unit { font-size:1rem; color:var(--amber-dim); margin-left:.35rem; letter-spacing:.15em; vertical-align:middle; }
+  .lcd-call { color:var(--text); font-size:1rem; font-weight:500; min-height:1.4em; }
+  .lcd-call .sub { color:var(--text-dim); font-weight:400; font-size:.82rem; }
+
+  .panel { display:none; }
+  .panel.show { display:block; }
+  .label { font-size:.65rem; color:var(--text-dim); text-transform:uppercase;
+    letter-spacing:.15em; margin-bottom:.4rem; padding-left:.25rem; }
+
+  /* MOSWIN info + calls */
+  .sysinfo { display:flex; flex-wrap:wrap; gap:.4rem .9rem; font-family:'Courier New',monospace;
+    font-size:.72rem; color:var(--text-dim); padding:.1rem .25rem .6rem; }
+  .sysinfo b { color:var(--green); font-weight:700; }
+  .calls { display:flex; flex-direction:column; gap:.3rem; max-height:230px; overflow-y:auto; }
+  .call { display:flex; align-items:center; gap:.6rem; background:var(--bg-raise);
+    border:1px solid var(--line); border-radius:7px; padding:.45rem .6rem; cursor:pointer; }
+  .call:hover { background:var(--bg-button-hover); }
+  .call .ctime { font-family:'Courier New',monospace; font-size:.72rem; color:var(--text-dim); }
+  .call .cname { font-size:.8rem; color:var(--text); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .call .csz { font-size:.68rem; color:var(--text-faint); }
+  .empty { color:var(--text-faint); font-size:.8rem; padding:.6rem .3rem; }
+
+  /* Aviation presets */
+  .presets { display:grid; grid-template-columns:repeat(2,1fr); gap:.5rem; }
+  .preset { background:var(--bg-button); border:1px solid transparent; border-radius:8px;
+    padding:.7rem .5rem; cursor:pointer; text-align:center; transition:all .12s; }
+  .preset:hover { background:var(--bg-button-hover); }
+  .preset.active { border-color:var(--amber); background:#2c2520; }
+  .preset .plabel { display:block; font-size:.9rem; font-weight:600; color:var(--text); }
+  .preset .pdesc { display:block; margin-top:.2rem; font-size:.7rem; color:var(--text-dim); font-family:'Courier New',monospace; }
+  .av-actions { display:flex; gap:.5rem; margin-top:.7rem; }
+  .av-actions .btn { flex:1; }
+
+  .controls { display:flex; align-items:center; gap:.5rem; justify-content:space-between; }
+  .btn { background:var(--bg-button); border:1px solid var(--line); border-radius:8px; color:var(--text);
+    padding:.6rem .85rem; font-size:.85rem; font-weight:500; cursor:pointer; transition:all .12s;
+    display:inline-flex; align-items:center; justify-content:center; gap:.35rem; min-width:44px; min-height:40px; }
+  .btn:hover:not(:disabled) { background:var(--bg-button-hover); }
+  .btn:disabled { opacity:.35; cursor:not-allowed; }
+  .btn.primary { background:var(--accent); border-color:var(--accent); }
+  .btn.primary:hover:not(:disabled) { filter:brightness(1.1); }
+  .vol-wrap { display:flex; align-items:center; gap:.4rem; }
+  .vol-icon { font-size:1rem; color:var(--text-dim); }
+  input[type=range] { -webkit-appearance:none; appearance:none; width:110px; height:6px;
+    background:var(--bg-raise); border-radius:3px; outline:none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:18px; height:18px;
+    background:var(--amber); border-radius:50%; cursor:pointer; box-shadow:0 0 4px rgba(255,174,58,.5); }
+  input[type=range]::-moz-range-thumb { width:18px; height:18px; background:var(--amber); border-radius:50%; cursor:pointer; border:0; }
+
+  .status-bar { font-size:.75rem; color:var(--text-dim); min-height:1.2em; padding:0 .25rem; }
+  .footer { text-align:center; font-size:.7rem; color:var(--text-faint); }
+  .footer a { color:var(--text-dim); text-decoration:none; }
+
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(4px);
+    display:none; align-items:center; justify-content:center; padding:1rem; z-index:100; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--bg-panel); border:1px solid var(--line); border-radius:14px; padding:1.1rem;
+    width:100%; max-width:340px; display:flex; flex-direction:column; gap:.75rem; }
+  .modal h3 { font-size:1rem; color:var(--text); }
+  .modal label { font-size:.8rem; color:var(--text-dim); display:block; margin-bottom:.25rem; }
+  .modal input[type=text], .modal input[type=number] { width:100%; padding:.5rem .65rem;
+    background:var(--bg-raise); border:1px solid var(--line); border-radius:6px; color:var(--text);
+    font-size:.9rem; font-family:'Courier New',monospace; outline:none; }
+  .modal input:focus { border-color:var(--amber); }
+  .modal-row { display:flex; gap:.5rem; }
+  .modal-row .btn { flex:1; }
+
+  .toast { position:fixed; bottom:1.5rem; left:50%; transform:translateX(-50%); background:var(--bg-button);
+    color:var(--text); padding:.6rem 1rem; border-radius:6px; border:1px solid var(--line);
+    font-size:.85rem; opacity:0; transition:opacity .25s; pointer-events:none; z-index:200; }
+  .toast.show { opacity:1; }
+  @media (max-width:400px){ .lcd-freq{font-size:2.2rem;} input[type=range]{width:80px;} }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Scanner</h1>
+  <nav>
+    <a href="/">Dashboard</a> &nbsp;
+    <a href="/listen" class="active">Listen</a> &nbsp;
+    <a href="/monitor">Monitor</a> &nbsp;
+    <a href="/calls">Calls</a> &nbsp;
+    <a href="/gallery">Gallery</a> &nbsp;
+    <a href="/recordings">Recordings</a>
+  </nav>
+</header>
+
+<div class="wrap">
+<div class="tuner">
+
+  <!-- Source selector -->
+  <div class="sources">
+    <button class="src moswin" id="src-moswin" data-src="moswin">
+      <span class="stitle">MOSWIN P25</span>
+      <span class="ssub">Cape County · 769 MHz</span>
+    </button>
+    <button class="src aviation" id="src-aviation" data-src="aviation">
+      <span class="stitle">Aviation AM</span>
+      <span class="ssub">Air band · 118–137 MHz</span>
+    </button>
+  </div>
+
+  <!-- LCD -->
+  <div class="lcd">
+    <div class="lcd-row">
+      <div class="lcd-band" id="band-display">—</div>
+      <div class="lcd-status"><span class="led" id="stream-led"></span> STREAM</div>
+    </div>
+    <div class="lcd-freq" id="freq-display">---.---<span class="unit">MHz</span></div>
+    <div class="lcd-call" id="call-display">Select a source</div>
+  </div>
+
+  <!-- MOSWIN panel -->
+  <div class="panel" id="panel-moswin">
+    <div class="sysinfo">
+      <span>NAC <b>0x1CC</b></span><span>SYS <b>0x1CE</b></span>
+      <span>WACN <b>0xBEE00</b></span><span>P25 <b>Phase II</b></span>
+    </div>
+    <div class="label">Recent calls — click to replay</div>
+    <div class="calls" id="calls"><div class="empty">Waiting for calls…</div></div>
+  </div>
+
+  <!-- Aviation panel -->
+  <div class="panel" id="panel-aviation">
+    <div class="label">Aviation presets — click to tune</div>
+    <div class="presets" id="presets"></div>
+    <div class="av-actions">
+      <button class="btn" id="dt-open">⌨ Direct tune</button>
+      <button class="btn" id="sq-btn">SQ: OFF</button>
+    </div>
+  </div>
+
+  <!-- Shared controls -->
+  <div class="controls">
+    <div><button class="btn primary" id="play-btn">▶</button></div>
+    <div class="vol-wrap">
+      <span class="vol-icon" id="vol-icon">🔊</span>
+      <input type="range" id="vol" min="0" max="100" value="80">
+    </div>
+  </div>
+
+  <div class="status-bar" id="status-bar"></div>
+  <div class="footer"><a href="/">dashboard</a></div>
+
+</div></div>
+
+<audio id="audio" preload="none"></audio>
+
+<div class="modal-bg" id="tune-modal">
+  <div class="modal">
+    <h3>Direct Tune — Aviation AM</h3>
+    <div>
+      <label>Frequency (e.g. 132.536M)</label>
+      <input type="text" id="dt-freq" placeholder="132.536M" autocomplete="off">
+    </div>
+    <div>
+      <label>Gain (0–60, default 40)</label>
+      <input type="number" id="dt-gain" value="40" min="0" max="60">
+    </div>
+    <div class="modal-row">
+      <button class="btn primary" id="dt-go">Tune</button>
+      <button class="btn" id="dt-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+const MOSWIN_URL  = {{ moswin_stream_url|tojson }};
+const MONITOR_URL = {{ monitor_stream_url|tojson }};
+const LS_VOL = 'scanner-listen.vol';
+const LS_SQ  = 'scanner-listen.sq';
+
+// Aviation presets — confirmed-active Cape Girardeau air-band channels.
+const PRESETS = [
+  { id:1, label:"Memphis Ctr", freq:"132.536M", gain:40, desc:"132.536 · AM" },
+  { id:2, label:"KCGI Tower",  freq:"125.525M", gain:40, desc:"125.525 · AM" },
+  { id:3, label:"Approach",    freq:"124.710M", gain:40, desc:"124.710 · AM" },
+  { id:4, label:"Center",      freq:"135.500M", gain:40, desc:"135.500 · AM" },
+  { id:5, label:"ARTCC",       freq:"127.490M", gain:40, desc:"127.490 · AM" },
+  { id:6, label:"ARTCC 2",     freq:"128.320M", gain:40, desc:"128.320 · AM" },
+];
+
+const $ = id => document.getElementById(id);
+const audio = $('audio');
+
+let source = 'moswin';       // 'moswin' | 'aviation'
+let activePreset = null;
+let isPlaying = false;
+let busy = false;            // switching/tuning in progress
+let squelchOn = false;
+
+// ---- UI helpers ----
+function setStreamLed(s){ const l=$('stream-led'); l.classList.remove('on','amber','err'); if(s) l.classList.add(s); }
+function setStatus(m){ $('status-bar').textContent = m; }
+let toastTimer;
+function showToast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2800); }
+
+function streamUrl(){ return source==='moswin' ? MOSWIN_URL : MONITOR_URL; }
+
+function showPanel(){
+  $('panel-moswin').classList.toggle('show', source==='moswin');
+  $('panel-aviation').classList.toggle('show', source==='aviation');
+  $('src-moswin').classList.toggle('active', source==='moswin');
+  $('src-aviation').classList.toggle('active', source==='aviation');
+}
+
+function lcdMoswin(detail){
+  $('band-display').textContent = 'P25';
+  $('freq-display').innerHTML = '769.169<span class="unit">MHz</span>';
+  const tg = detail && detail.startsWith('active:') ? detail.replace('active:','').trim() : null;
+  $('call-display').innerHTML = tg
+    ? `▶ ${tg} <span class="sub">· talkgroup</span>`
+    : `MOSWIN control channel <span class="sub">· monitoring</span>`;
+}
+function lcdAviation(freq,label){
+  $('band-display').textContent = 'AM';
+  if(!freq){ $('freq-display').innerHTML='---.---<span class="unit">MHz</span>';
+    $('call-display').textContent='Pick a preset or direct-tune'; return; }
+  const num = freq.replace(/[kMG]$/,'');
+  $('freq-display').innerHTML = `${parseFloat(num).toFixed(3)}<span class="unit">MHz</span>`;
+  $('call-display').innerHTML = label ? `${label} <span class="sub">· ${freq}</span>` : `<span class="sub">${freq}</span>`;
+}
+
+// ---- audio ----
+function playAudio(){
+  const url = streamUrl();
+  if(!url){ showToast('stream URL not configured'); setStreamLed('err'); return; }
+  const sep = url.includes('?')?'&':'?';
+  audio.src = url + sep + 't=' + Date.now();
+  audio.volume = $('vol').value/100;
+  const p = audio.play();
+  if(p&&p.catch) p.catch(e=>{ isPlaying=false; $('play-btn').textContent='▶'; setStreamLed('err'); showToast('Play failed: '+e.message); });
+  isPlaying=true; $('play-btn').textContent='⏸';
+}
+function pauseAudio(){ audio.pause(); audio.src=''; isPlaying=false; $('play-btn').textContent='▶'; }
+
+// ---- wait until the scheduler is on the expected job, then play ----
+async function waitForJob(jobName, match, maxMs=22000, pollMs=700){
+  const deadline = Date.now()+maxMs;
+  while(Date.now()<deadline){
+    await new Promise(r=>setTimeout(r,pollMs));
+    try{
+      const d = await (await fetch('/api/status')).json();
+      const cur = d.current;
+      if(cur && cur.name===jobName && (!match || (cur.detail||'').includes(match))){
+        await new Promise(r=>setTimeout(r,3000)); // let Icecast buffer
+        return true;
+      }
+    }catch(e){}
+  }
+  return false;
+}
+
+// ---- source switching ----
+async function selectMoswin(){
+  if(busy) return; busy=true;
+  source='moswin'; activePreset=null; showPanel();
+  if(isPlaying) pauseAudio();
+  setStreamLed('amber'); setStatus('Switching to MOSWIN P25…'); lcdMoswin(null);
+  try{
+    const j = await (await fetch('/api/source/moswin',{method:'POST'})).json();
+    if(j.error) throw new Error(j.error);
+    setStatus('Waiting for SDRTrunk to lock control channel…');
+    const ok = await waitForJob('ems_scanner', null);
+    setStatus(ok?'':'MOSWIN did not start — check scheduler');
+    setStreamLed(ok?'on':'err');
+    if(ok) playAudio();
+  }catch(e){ setStreamLed('err'); setStatus('Error: '+e.message); showToast(e.message); }
+  finally{ busy=false; }
+}
+
+async function selectAviation(){
+  source='aviation'; showPanel();
+  if(isPlaying) pauseAudio();
+  setStreamLed(''); lcdAviation(null,null);
+  setStatus('Pick a preset to tune the air band.');
+}
+
+async function tuneAviation(freq, gain, label, presetId=null){
+  if(busy) return; busy=true;
+  source='aviation'; showPanel();
+  if(isPlaying) pauseAudio();
+  setStreamLed('amber'); setStatus(`Tuning ${freq} AM…`); lcdAviation(freq,label);
+  activePreset=presetId; renderPresets();
+  try{
+    const r = await fetch('/api/monitor/tune',{ method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ freq, mode:'am', gain, label, duration_s:3600, audio_squelch:squelchOn }) });
+    const j = await r.json();
+    if(j.error) throw new Error(j.error);
+    setStatus('Waiting for stream…');
+    const ok = await waitForJob('monitor', freq);
+    setStatus(''); setStreamLed(ok?'on':'err');
+    if(ok) playAudio();
+  }catch(e){ setStreamLed('err'); setStatus('Error: '+e.message); showToast(e.message); }
+  finally{ busy=false; }
+}
+
+// ---- aviation presets ----
+function renderPresets(){
+  const g=$('presets'); g.innerHTML='';
+  PRESETS.forEach(p=>{
+    const b=document.createElement('button');
+    b.className='preset'+(activePreset===p.id?' active':'');
+    b.innerHTML=`<span class="plabel">${p.label}</span><span class="pdesc">${p.desc}</span>`;
+    b.addEventListener('click',()=>tuneAviation(p.freq,p.gain,p.label,p.id));
+    g.appendChild(b);
+  });
+}
+
+// ---- MOSWIN recent calls ----
+async function refreshCalls(){
+  if(source!=='moswin') return;
+  try{
+    const calls = await (await fetch('/api/calls?limit=15')).json();
+    const box=$('calls');
+    if(!Array.isArray(calls) || calls.length===0){ box.innerHTML='<div class="empty">No calls recorded yet.</div>'; return; }
+    box.innerHTML='';
+    calls.forEach(c=>{
+      const t=(c.ts||'').replace('T',' ').slice(5,16);
+      const d=document.createElement('div'); d.className='call';
+      d.innerHTML=`<span class="ctime">${t}</span><span class="cname">${c.filename||''}</span><span class="csz">${c.size_kb||0}k</span>`;
+      d.addEventListener('click',()=>{ audio.pause(); audio.src='/recordings/ems/'+encodeURIComponent(c.path||c.filename); audio.play().catch(()=>{}); $('play-btn').textContent='⏸'; isPlaying=true; });
+      box.appendChild(d);
+    });
+  }catch(e){}
+}
+
+// ---- poll live status (talkgroup + preemption detection) ----
+async function pollStatus(){
+  if(busy) return;
+  try{
+    const d = await (await fetch('/api/status')).json();
+    const cur = d.current;
+    if(source==='moswin'){
+      if(cur && cur.name==='ems_scanner'){ lcdMoswin(cur.detail); if(isPlaying) setStreamLed('on'); }
+      else if(cur){ setStreamLed('amber'); setStatus('MOSWIN preempted by '+cur.name); }
+    } else if(source==='aviation'){
+      if(!(cur && cur.name==='monitor') && activePreset!==null){
+        activePreset=null; renderPresets(); pauseAudio(); setStreamLed('');
+        setStatus('Tuner stopped'+(cur?(' — now '+cur.name):''));
+      }
+    }
+  }catch(e){}
+}
+
+// ---- direct tune modal ----
+function openModal(){ $('tune-modal').classList.add('show'); setTimeout(()=>$('dt-freq').focus(),60); }
+function closeModal(){ $('tune-modal').classList.remove('show'); }
+async function commitTune(){
+  const freq=$('dt-freq').value.trim(); if(!freq){ showToast('Enter a frequency'); return; }
+  const gain=parseInt($('dt-gain').value)||40; closeModal();
+  await tuneAviation(freq, gain, freq, null);
+}
+
+// ---- squelch toggle (aviation) ----
+function setSqBtn(){ $('sq-btn').textContent='SQ: '+(squelchOn?'ON':'OFF'); }
+async function toggleSquelch(){
+  squelchOn=!squelchOn; setSqBtn(); localStorage.setItem(LS_SQ, squelchOn?'1':'0');
+  try{ await fetch('/api/monitor/squelch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:squelchOn})}); }catch(e){}
+}
+
+// ---- wiring ----
+$('src-moswin').addEventListener('click', selectMoswin);
+$('src-aviation').addEventListener('click', selectAviation);
+$('play-btn').addEventListener('click', ()=>{ if(isPlaying) pauseAudio(); else playAudio(); });
+$('dt-open').addEventListener('click', openModal);
+$('dt-go').addEventListener('click', commitTune);
+$('dt-cancel').addEventListener('click', closeModal);
+$('sq-btn').addEventListener('click', toggleSquelch);
+$('dt-freq').addEventListener('keydown', e=>{ if(e.key==='Enter') commitTune(); if(e.key==='Escape') closeModal(); });
+$('tune-modal').addEventListener('click', e=>{ if(e.target.id==='tune-modal') closeModal(); });
+$('vol').addEventListener('input', e=>{ audio.volume=e.target.value/100; localStorage.setItem(LS_VOL,e.target.value);
+  $('vol-icon').textContent = e.target.value==0?'🔇':e.target.value<33?'🔈':e.target.value<66?'🔉':'🔊'; });
+
+// ---- init ----
+const sv=localStorage.getItem(LS_VOL); if(sv!=null){ $('vol').value=sv; $('vol').dispatchEvent(new Event('input')); }
+squelchOn = localStorage.getItem(LS_SQ)==='1'; setSqBtn();
+renderPresets();
+
+(async ()=>{
+  let cur=null;
+  try{ cur=(await (await fetch('/api/status')).json()).current; }catch(e){}
+  if(cur && cur.name==='monitor'){
+    // Already on aviation — reflect it
+    source='aviation'; showPanel();
+    const detail=cur.detail||''; const fm=detail.split(' ')[0];
+    lcdAviation(fm, (detail.split(' — ')[1]||''));
+    setStreamLed('on'); playAudio(); setStatus('');
+  } else {
+    // Default to MOSWIN (starts it if idle / preempts a non-NOAA job)
+    showPanel();
+    await selectMoswin();
+  }
+})();
+
+setInterval(pollStatus, 3000);
+setInterval(refreshCalls, 6000);
+refreshCalls();
+</script>
+</body>
+</html>
