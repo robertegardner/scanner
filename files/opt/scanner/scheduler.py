@@ -92,6 +92,7 @@ class Config:
     autopilot: bool
     ems_default: bool
     squelch_default: bool
+    talkgroups_tsv: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -113,6 +114,7 @@ class Config:
             autopilot=os.environ.get("SCHEDULER_AUTOPILOT", "true").lower() in ("1", "true", "yes", "on"),
             ems_default=os.environ.get("SCHEDULER_EMS_DEFAULT", "false").lower() in ("1", "true", "yes", "on"),
             squelch_default=os.environ.get("MONITOR_SQUELCH_DEFAULT", "true").lower() in ("1", "true", "yes", "on"),
+            talkgroups_tsv=os.environ.get("TALKGROUPS_TSV", "/opt/scanner/p25/moswin_talkgroups.tsv"),
         )
 
 
@@ -163,6 +165,38 @@ _VALID_FREQ = re.compile(r"^\d+(\.\d+)?[kMG]?$")
 _VALID_MODE = {"fm", "am", "usb", "lsb", "wbfm", "raw"}
 
 MONITOR_ICECAST_URL = os.environ.get("MONITOR_ICECAST_URL", "")
+
+# SDRTrunk recording filenames look like:
+#   20260601_224359T-Cape_County_MOSWIN__TO_4229_FROM_91986.mp3
+_CALL_NAME_RE = re.compile(r"_TO_(\d+)_FROM_(\d+)")
+
+# Cached TGID -> label map, reloaded when moswin_talkgroups.tsv changes on disk.
+_TG_LABELS_CACHE: dict = {"path": None, "mtime": -1, "map": {}}
+
+
+def _talkgroup_labels(path: str) -> dict:
+    """Load TGID->label from the tab-separated talkgroups file (cached by mtime)."""
+    try:
+        mtime = os.stat(path).st_mtime
+    except OSError:
+        return {}
+    cache = _TG_LABELS_CACHE
+    if cache["path"] == path and cache["mtime"] == mtime:
+        return cache["map"]
+    mapping: dict = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2 and parts[0].strip().isdigit():
+                    mapping[parts[0].strip()] = parts[1].strip()
+    except OSError:
+        return cache["map"]
+    cache.update(path=path, mtime=mtime, map=mapping)
+    return mapping
 
 
 class ManualJob(Job):
@@ -830,19 +864,32 @@ class Scheduler:
         }
 
     def recent_calls(self, limit: int = 50) -> list[dict]:
-        """Scan EMS recordings directory for recent call files."""
+        """Scan EMS recordings directory for recent call files.
+
+        SDRTrunk names recordings with the raw talkgroup/radio numbers
+        (...__TO_<tgid>_FROM_<radio>.mp3), so we map the TGID to a friendly
+        label here from moswin_talkgroups.tsv (the same file gen_aliases.py
+        uses). Unknown TGIDs fall back to "TG <n>".
+        """
         recordings = Path(self._config.ems_recordings_dir)
         if not recordings.exists():
             return []
+        labels = _talkgroup_labels(self._config.talkgroups_tsv)
         files = sorted(recordings.rglob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
         calls = []
         for f in files[:limit]:
             mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            m = _CALL_NAME_RE.search(f.name)
+            tgid = m.group(1) if m else None
+            radio = m.group(2) if m else None
             calls.append({
                 "ts": mtime.isoformat(timespec="seconds"),
                 "filename": f.name,
                 "path": str(f.relative_to(recordings)),
                 "size_kb": round(f.stat().st_size / 1024),
+                "tgid": tgid,
+                "radio": radio,
+                "talkgroup": labels.get(tgid) or (f"TG {tgid}" if tgid else "—"),
             })
         return calls
 

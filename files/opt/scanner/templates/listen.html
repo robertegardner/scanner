@@ -380,7 +380,9 @@ async function refreshCalls(){
     calls.forEach(c=>{
       const t=(c.ts||'').replace('T',' ').slice(5,16);
       const d=document.createElement('div'); d.className='call';
-      d.innerHTML=`<span class="ctime">${t}</span><span class="cname">${c.filename||''}</span><span class="csz">${c.size_kb||0}k</span>`;
+      const tg=c.talkgroup || c.filename || '';
+      const meta=(c.radio?('← '+c.radio+' '):'')+(c.size_kb||0)+'k';
+      d.innerHTML=`<span class="ctime">${t}</span><span class="cname">${tg}</span><span class="csz">${meta}</span>`;
       d.addEventListener('click',()=>{ audio.pause(); audio.src='/recordings/ems/'+encodeURIComponent(c.path||c.filename); audio.play().catch(()=>{}); $('play-btn').textContent='⏸'; isPlaying=true; });
       box.appendChild(d);
     });

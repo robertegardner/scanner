@@ -26,14 +26,54 @@
   (only if that file does not already exist).
 -->
 <playlist version="4">
+<!-- TALKGROUPS:BEGIN (generated from p25/moswin_talkgroups.tsv by gen_aliases.py — edit the TSV, not here) -->
   <alias color="-16711936" group="" name="Cape County All" list="MOSWIN">
     <id type="talkgroupRange" protocol="APCO25" min="0" max="65535"/>
     <id type="broadcastChannel" channel="MOSWIN Live"/>
-    <!-- record: SDRTrunk writes decoded call audio (.mp3) to its recordings dir
-         (needs the JMBE codec); surfaced on the UI /calls page. -->
     <id type="record"/>
   </alias>
-  <channel name="Cape County MOSWIN" enabled="true" order="0">
+  <alias color="-16776961" group="" name="CGPD Events" list="MOSWIN">
+    <id type="talkgroup" value="4206" protocol="APCO25"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+    <id type="record"/>
+  </alias>
+  <alias color="-16776961" group="" name="Jackson PD" list="MOSWIN">
+    <id type="talkgroup" value="4229" protocol="APCO25"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+    <id type="record"/>
+  </alias>
+  <alias color="-16776961" group="" name="Sheriff / Law Disp" list="MOSWIN">
+    <id type="talkgroup" value="4237" protocol="APCO25"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+    <id type="record"/>
+  </alias>
+  <alias color="-65536" group="" name="Fire Paging" list="MOSWIN">
+    <id type="talkgroup" value="4242" protocol="APCO25"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+    <id type="record"/>
+  </alias>
+  <alias color="-16776961" group="" name="SEMO Univ Police" list="MOSWIN">
+    <id type="talkgroup" value="4244" protocol="APCO25"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+    <id type="record"/>
+  </alias>
+  <alias color="-16711936" group="" name="Region E HSRT" list="MOSWIN">
+    <id type="talkgroup" value="4246" protocol="APCO25"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+    <id type="record"/>
+  </alias>
+  <alias color="-65536" group="" name="Fire Dispatch" list="MOSWIN">
+    <id type="talkgroup" value="4249" protocol="APCO25"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+    <id type="record"/>
+  </alias>
+  <alias color="-16776961" group="" name="CGPD SWAT" list="MOSWIN">
+    <id type="talkgroup" value="4250" protocol="APCO25"/>
+    <id type="broadcastChannel" channel="MOSWIN Live"/>
+    <id type="record"/>
+  </alias>
+<!-- TALKGROUPS:END -->
+<channel name="Cape County MOSWIN" enabled="true" order="0">
     <alias_list_name>MOSWIN</alias_list_name>
     <event_log_configuration/>
     <source_configuration type="sourceConfigTuner" frequency="769168750" source_type="TUNER"/>
