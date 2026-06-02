@@ -90,6 +90,7 @@ class Config:
     monitor_default_duration_s: int
     recording_source_url: str
     autopilot: bool
+    ems_default: bool
     squelch_default: bool
 
     @classmethod
@@ -110,6 +111,7 @@ class Config:
             monitor_default_duration_s=int(os.environ.get("MONITOR_DEFAULT_DURATION_S", "600")),
             recording_source_url=os.environ.get("RECORDING_SOURCE_URL", "http://localhost:8000/monitor.mp3"),
             autopilot=os.environ.get("SCHEDULER_AUTOPILOT", "true").lower() in ("1", "true", "yes", "on"),
+            ems_default=os.environ.get("SCHEDULER_EMS_DEFAULT", "false").lower() in ("1", "true", "yes", "on"),
             squelch_default=os.environ.get("MONITOR_SQUELCH_DEFAULT", "true").lower() in ("1", "true", "yes", "on"),
         )
 
@@ -556,8 +558,12 @@ class Scheduler:
         if self._config.autopilot:
             self._queue.push(EMSJob(self._config))
             log.info("Scheduler started (autopilot ON: EMS default + NOAA passes)")
+        elif self._config.ems_default:
+            self._queue.push(EMSJob(self._config))
+            log.info("Scheduler started (EMS default ON, NOAA off: MOSWIN runs in "
+                     "background, yields to manual tunes and resumes after)")
         else:
-            log.info("Scheduler started (autopilot OFF: idle until manually tuned)")
+            log.info("Scheduler started (idle until manually tuned)")
         # Always run the pass watcher: it keeps TLEs fresh and populates the
         # dashboard's upcoming-pass list in both modes. It only *queues* NOAA
         # capture jobs when autopilot is on (see _pass_watcher).
@@ -592,9 +598,12 @@ class Scheduler:
                     self._monitor_job = None
 
             if job.should_requeue():
-                # When autopilot is off we deliberately suppress EMS's self-requeue
-                # so the scheduler stays idle between manual tunes.
-                if self._config.autopilot or not isinstance(job, EMSJob):
+                # EMS self-requeues only when it's meant to be the background
+                # default (autopilot or ems_default) — so after a manual aviation
+                # tune ends, MOSWIN resumes. In plain manual mode EMS does not
+                # requeue, leaving the scheduler idle between tunes.
+                if (self._config.autopilot or self._config.ems_default
+                        or not isinstance(job, EMSJob)):
                     self._queue.push(job)
 
     def _pass_watcher(self) -> None:
