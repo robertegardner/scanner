@@ -25,7 +25,7 @@ from jobs.ems_scanner import EMSJob
 from jobs.noaa_apt import NOAAJob
 from lib.pass_predictor import upcoming_passes, update_tles
 from lib.queue import JobQueue
-from lib.sdr import SDRToken
+from lib.sdr import SDRToken, reset_dongle
 
 logging.basicConfig(
     level=logging.INFO,
@@ -616,6 +616,10 @@ class Scheduler:
 
             self._sdr.acquire(job.name)
             log.info("Starting job: %s", job.name)
+            # Clear any wedged RTL state from the previous job before this one
+            # opens the dongle — covers every hand-off direction (rtl_fm<->SDRTrunk,
+            # and NOAA/manual). ~3s; negligible vs. job durations.
+            reset_dongle()
 
             t = threading.Thread(target=self._run_job, args=(job,), daemon=True)
             with self._lock:
