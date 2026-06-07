@@ -39,6 +39,22 @@ with the radio:** see the SDRplay note under "Hardware constraints" — SDRTrunk
 would grab the radio's RSPdx-R2 without the libsdrplay_api.so perm restriction
 (now in bootstrap.sh). Icecast `<sources>` raised 2→10 for the category mounts.
 
+**2026-06-07 — MOSWIN tuner-wedge fix (commits `dbe3ad9` + `c7f659d`):**
+ATC (rtl_fm) and MOSWIN (SDRTrunk) share the one Nooelec, and an rtl_fm↔SDRTrunk
+hand-off intermittently wedges the R820T so SDRTrunk's I2C tuner init fails
+(`USB error 1: error writing byte buffer` → `No Tuner Available`) — a silent
+tunerless zombie with mounts still "Connected". Fix: `lib/sdr.py reset_dongle()`
+(`sudo usbreset 0bda:2838` + 3s settle) is now called from the scheduler `_loop`
+before *every* job acquires the dongle (covers both directions + NOAA/manual);
+needs the `usbreset` sudoers line (colon escaped). The `EMSJob` watchdog now
+faults on `No Tuner Available`/`Unable to start`/`auto-start failed` →
+requeue-with-reset. **Gotcha:** the scheduler reads SDRTrunk's STDOUT (console
+layout, no thread-name column), so watchdog markers must be stdout-visible —
+success is keyed off the channelizer line (`ComplexPolyphaseChannelizer …
+providing [N] channels`), not the file-only `[sdrtrunk channel …]` tag (that
+mistake false-restarted EMS every ~50s; fixed in c7f659d). Full writeup:
+`notes/2026-06-07-moswin-tuner-wedge-fix.md`.
+
 **Implemented + live:**
 - Scheduler with priority preemption, EMS job (SDRTrunk), NOAA APT job,
   ManualJob (raw WAV capture), MonitorJob (live ffmpeg → Icecast stream).
