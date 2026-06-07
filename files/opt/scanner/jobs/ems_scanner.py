@@ -23,6 +23,17 @@ _TUNER_LOSS_GRACE_S = 25.0   # give in-process hotplug this long to recover befo
 _TUNER_STARTUP_S = 40.0      # SDRTrunk must acquire a tuner within this long after launch
 _RESTART_BACKOFF_S = 10.0    # pause before failing out, so we don't hammer a flaky/over-current USB bus
 
+# The aviation rtl_fm path and SDRTrunk share the one Nooelec dongle. After an
+# rtl_fm→SDRTrunk hand-off the R820T's I2C register init intermittently fails
+# ("USB error 1: error writing byte buffer" → "No Tuner Available"), leaving a
+# silent tunerless zombie (observed 2026-06-07). A USB-level reset clears that
+# wedged state; the settle delay lets the device re-enumerate before SDRTrunk
+# opens it. Reset is best-effort — needs the usbreset sudoers entry; on failure
+# we still take the settle delay, which alone often unsticks the hand-off.
+_USBRESET = "/usr/bin/usbreset"
+_DONGLE_USB_ID = "0bda:2838"  # Nooelec NESDR SMArt v5 (RTL2838)
+_DONGLE_SETTLE_S = 3.0
+
 
 class EMSJob(Job):
     name = "ems_scanner"
@@ -35,6 +46,7 @@ class EMSJob(Job):
         self._tuner_lock = threading.Lock()
         self._tuner_ever_ok = False
         self._tuner_lost_since: float | None = None
+        self._tuner_start_failed = False
 
     def should_requeue(self) -> bool:
         return True
@@ -50,6 +62,10 @@ class EMSJob(Job):
         with self._tuner_lock:
             self._tuner_ever_ok = False
             self._tuner_lost_since = None
+            self._tuner_start_failed = False
+
+        # Clear any wedged RTL state left by a prior rtl_fm hand-off before launch.
+        self._reset_dongle()
 
         cmd = self._build_command()
         log.info("Starting SDRTrunk: %s", " ".join(cmd))
@@ -98,6 +114,29 @@ class EMSJob(Job):
                 preempt_signal.wait(timeout=_RESTART_BACKOFF_S)
                 return JobResult(success=False, log=f"SDRTrunk tuner lost: {fault}")
 
+    def _reset_dongle(self) -> None:
+        """USB-reset the Nooelec before launching SDRTrunk, then let it settle.
+
+        Best-effort: if usbreset is missing or the sudoers entry isn't present,
+        log and fall through to the settle delay (which on its own often unsticks
+        the rtl_fm→SDRTrunk hand-off). SDRTrunk discovers by USB bus/port, not
+        device number, so the post-reset re-enumeration is transparent to it.
+        """
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", _USBRESET, _DONGLE_USB_ID],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, timeout=15,
+            )
+            if r.returncode == 0:
+                log.info("Reset RTL dongle %s before SDRTrunk launch", _DONGLE_USB_ID)
+            else:
+                log.warning("usbreset %s failed rc=%s: %s",
+                            _DONGLE_USB_ID, r.returncode, (r.stdout or "").strip())
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            log.warning("usbreset unavailable (%s) — using settle delay only", e)
+        time.sleep(_DONGLE_SETTLE_S)
+
     def _terminate(self, proc: subprocess.Popen, reader: threading.Thread) -> None:
         """Stop the SDRTrunk process group, escalating to SIGKILL if needed."""
         try:
@@ -116,6 +155,12 @@ class EMSJob(Job):
         with self._tuner_lock:
             ever_ok = self._tuner_ever_ok
             lost_since = self._tuner_lost_since
+            start_failed = self._tuner_start_failed
+        # Explicit acquisition failure (e.g. "No Tuner Available" after the
+        # RTL I2C init error) — fail out now so the requeue retries with a fresh
+        # USB reset, rather than sitting silent for the whole startup window.
+        if start_failed:
+            return "tuner failed to start"
         if not ever_ok:
             if now - spawn_t > _TUNER_STARTUP_S:
                 return "no tuner acquired within startup window"
@@ -143,11 +188,30 @@ class EMSJob(Job):
                 lines[:] = lines[-500:]
 
     def _track_tuner(self, upper: str) -> None:
-        """Watch SDRTrunk's log for tuner acquire / loss markers."""
-        if "ADDED / STARTING" in upper or "TUNER PLUG-IN DETECTED" in upper:
+        """Watch SDRTrunk's log for tuner acquire-success / failure / loss markers.
+
+        NOTE: "ADDED / STARTING" and "TUNER PLUG-IN DETECTED" are *attempt*
+        markers — SDRTrunk logs them even when the tuner then fails to
+        initialize (observed 2026-06-07: RTL I2C write I/O error right after an
+        rtl_fm hand-off still logged both, so the old watchdog thought the tuner
+        was healthy and never restarted → silent dead air). So success is keyed
+        off a channel actually decoding samples ("sdrtrunk channel ["), and the
+        explicit acquisition-failure lines force an immediate fault instead.
+        """
+        # Genuine success: a channel thread is decoding, which only happens once
+        # the tuner is delivering samples.
+        if "SDRTRUNK CHANNEL [" in upper:
             with self._tuner_lock:
                 self._tuner_ever_ok = True
                 self._tuner_lost_since = None
+                self._tuner_start_failed = False
+        # Hard failure to acquire/start the tuner at launch.
+        elif ("NO TUNER AVAILABLE" in upper
+              or "UNABLE TO START" in upper
+              or "AUTO-START FAILED" in upper):
+            with self._tuner_lock:
+                self._tuner_start_failed = True
+        # Tuner dropped off the bus after having worked.
         elif ("TUNER UNPLUGGED" in upper
               or "LIBUSB_TRANSFER_NO_DEVICE" in upper
               or "LIBUSB_ERROR_NO_DEVICE" in upper):

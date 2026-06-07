@@ -5,3 +5,7 @@ scanner ALL=(ALL) NOPASSWD: /bin/systemctl restart scanner-scheduler.service
 scanner ALL=(ALL) NOPASSWD: /bin/systemctl start scanner-ui.service
 scanner ALL=(ALL) NOPASSWD: /bin/systemctl stop scanner-ui.service
 scanner ALL=(ALL) NOPASSWD: /bin/systemctl restart scanner-ui.service
+
+# Reset the Nooelec dongle (0bda:2838) before launching SDRTrunk, to clear the
+# wedged RTL state left by an rtl_fm->SDRTrunk hand-off (see jobs/ems_scanner.py).
+scanner ALL=(ALL) NOPASSWD: /usr/bin/usbreset 0bda\:2838
