@@ -191,12 +191,18 @@ cp "$REPO/files/etc/systemd/system/scanner-scheduler.service" /etc/systemd/syste
 cp "$REPO/files/etc/systemd/system/scanner-ui.service" /etc/systemd/system/
 cp "$REPO/files/etc/systemd/system/scanner-usb-oc-watch.service" /etc/systemd/system/
 cp "$REPO/files/etc/systemd/system/scanner-usb-oc-watch.timer" /etc/systemd/system/
+cp "$REPO/files/etc/systemd/system/scanner-temp-watch.service" /etc/systemd/system/
+cp "$REPO/files/etc/systemd/system/scanner-temp-watch.timer" /etc/systemd/system/
 cp "$REPO/files/etc/systemd/system/scanner-transcribe.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable scanner-scheduler.service scanner-ui.service
 # USB over-current watcher (see CLAUDE.md "Hardware constraints"): logs new kernel
 # over-current events so we can tell whether usb_max_current_enable=1 holds.
 systemctl enable scanner-usb-oc-watch.timer
+# SoC temperature/throttle watcher: logs a CSV trend (/var/lib/scanner/soc_temp.log)
+# and warns when the Pi crosses 80°C or actively throttles. Data-gathering only —
+# the dongle wedges are NOT assumed thermal (the radio shares this Pi and is fine).
+systemctl enable scanner-temp-watch.timer
 # Transcription orchestrator (Whisper captions + EMS call text). Reuses the
 # radio's GPU host; degrades gracefully when it's offline. Set WHISPER_URL/
 # WHISPER_TOKEN in /etc/scanner/config.env first.

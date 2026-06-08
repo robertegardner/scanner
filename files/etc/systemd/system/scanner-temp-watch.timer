@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the scanner SoC temperature watcher every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+# Catch up if the Pi was asleep/off when a run was due.
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

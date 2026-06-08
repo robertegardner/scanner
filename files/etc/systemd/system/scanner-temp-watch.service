@@ -1,0 +1,10 @@
+[Unit]
+Description=Scanner SoC temperature + throttle watcher (logs trend, warns on threshold)
+Documentation=file:///srv/scanner/CLAUDE.md
+
+[Service]
+Type=oneshot
+# Runs as root for parity with the other watchers; vcgencmd itself needs no
+# privilege, but the script appends to /var/lib/scanner.
+ExecStart=/opt/scanner/scripts/temp_watch.sh
+Nice=10
