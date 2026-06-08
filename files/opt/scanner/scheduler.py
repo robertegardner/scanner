@@ -25,7 +25,7 @@ from jobs.ems_scanner import EMSJob
 from jobs.noaa_apt import NOAAJob
 from lib.pass_predictor import upcoming_passes, update_tles
 from lib.queue import JobQueue
-from lib.sdr import SDRToken, reset_dongle
+from lib.sdr import SDRToken, dongle_present, reset_dongle
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +71,13 @@ _DEFAULT_FILTER_FM = (
     "dynaudnorm=p=0.85:m=15:s=10:g=11"
 )
 _DEFAULT_SQUELCH = "agate=threshold=0.06:ratio=8:attack=20:release=150:detection=rms:link=average"
+
+# When the dongle is physically off the USB bus (over-current / a wedge so hard
+# it dropped off and won't re-enumerate), every job fails instantly and a USB
+# reset can't help. Rather than churn the SDRTrunk JVM + usbreset every ~15s on a
+# dead bus, the scheduler loop waits this long between checks, recovering within
+# a cooldown of the dongle physically returning (replug / power-cycle).
+_NO_DONGLE_COOLDOWN_S = 60.0
 
 
 @dataclass
@@ -567,6 +574,13 @@ class Scheduler:
         self._sdr = SDRToken()
         self._current_job: Optional[Job] = None
         self._current_thread: Optional[threading.Thread] = None
+        # Name of the last job that actually held the dongle, or None when the
+        # dongle has freshly (re)enumerated and no job has held it since. Gates
+        # the pre-acquire reset_dongle() — see _loop. Reset to None whenever the
+        # dongle goes missing, so the first acquire after a replug skips the
+        # reset (a clean dongle has nothing to un-wedge, and usbreset-ing this
+        # aging unit while it's healthy is what knocks it off the bus).
+        self._dongle_held_by: Optional[str] = None
         self._preempt_signal = threading.Event()
         self._lock = threading.Lock()
         self._activity: deque[dict] = deque(maxlen=100)
@@ -606,20 +620,61 @@ class Scheduler:
         threading.Thread(target=self._pass_watcher, daemon=True, name="pass-watcher").start()
         threading.Thread(target=self._loop, daemon=True, name="scheduler-loop").start()
 
+    def _requeue_if_due(self, job: Job) -> None:
+        """Push a finished/deferred job back onto the queue if it should recur.
+
+        EMS self-requeues only when it's meant to be the background default
+        (autopilot or ems_default) — so after a manual aviation tune ends, MOSWIN
+        resumes; in plain manual mode EMS does not requeue, leaving the scheduler
+        idle between tunes. Non-EMS jobs follow their own should_requeue().
+        """
+        if job.should_requeue() and (
+            self._config.autopilot or self._config.ems_default
+            or not isinstance(job, EMSJob)
+        ):
+            self._queue.push(job)
+
     def _loop(self) -> None:
         while True:
             job = self._next_job()
             self._preempt_signal.clear()
+
+            # Every job needs the one Nooelec. If it's physically gone from the
+            # USB bus (over-current / hard wedge — see lib.sdr.dongle_present),
+            # don't run: SDRTrunk would just loop "No Tuner Available" and
+            # usbreset would storm a dead device every ~15s. Defer with a long,
+            # preempt-interruptible cooldown and requeue, so we recover within a
+            # minute of the dongle returning (replug / power-cycle) without
+            # hammering the bus or churning the JVM meanwhile.
+            if not dongle_present():
+                log.warning("Dongle not on USB bus — deferring %s for %ds "
+                            "(needs replug / power-cycle)",
+                            job.name, int(_NO_DONGLE_COOLDOWN_S))
+                # When it returns it'll be freshly enumerated — don't usbreset it
+                # on the first acquire (see reset_dongle gating below).
+                self._dongle_held_by = None
+                self._requeue_if_due(job)
+                self._preempt_signal.wait(timeout=_NO_DONGLE_COOLDOWN_S)
+                continue
 
             with self._lock:
                 self._current_job = job
 
             self._sdr.acquire(job.name)
             log.info("Starting job: %s", job.name)
-            # Clear any wedged RTL state from the previous job before this one
-            # opens the dongle — covers every hand-off direction (rtl_fm<->SDRTrunk,
-            # and NOAA/manual). ~3s; negligible vs. job durations.
-            reset_dongle()
+            # Clear any wedged RTL state left by the *previous* job before this
+            # one opens the dongle — the rtl_fm<->SDRTrunk (and NOAA/manual)
+            # hand-off intermittently wedges the R820T, and a USB reset is the
+            # only thing that clears it. But only do this on an actual hand-off:
+            # on the first acquire after the dongle freshly enumerated (boot or
+            # replug) there's no prior owner and nothing to un-wedge, and
+            # usbreset-ing this degrading dongle while it's healthy is exactly
+            # what drops it off the bus (error -71 -> unenumerated). ~3s.
+            if self._dongle_held_by is not None:
+                reset_dongle()
+            else:
+                log.info("Skipping pre-acquire reset for %s — dongle freshly "
+                         "enumerated, no prior owner to clear", job.name)
 
             t = threading.Thread(target=self._run_job, args=(job,), daemon=True)
             with self._lock:
@@ -628,6 +683,9 @@ class Scheduler:
             t.join()
 
             self._sdr.release()
+            # A job held the dongle, so the next acquire is a genuine hand-off
+            # and should reset_dongle() to clear any wedge it leaves behind.
+            self._dongle_held_by = job.name
 
             with self._lock:
                 self._current_job = None
@@ -637,14 +695,7 @@ class Scheduler:
                 if isinstance(job, MonitorJob):
                     self._monitor_job = None
 
-            if job.should_requeue():
-                # EMS self-requeues only when it's meant to be the background
-                # default (autopilot or ems_default) — so after a manual aviation
-                # tune ends, MOSWIN resumes. In plain manual mode EMS does not
-                # requeue, leaving the scheduler idle between tunes.
-                if (self._config.autopilot or self._config.ems_default
-                        or not isinstance(job, EMSJob)):
-                    self._queue.push(job)
+            self._requeue_if_due(job)
 
     def _pass_watcher(self) -> None:
         """Background thread: predict NOAA passes and queue them ~5 min before AOS."""

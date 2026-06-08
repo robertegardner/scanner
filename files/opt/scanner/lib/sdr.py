@@ -1,4 +1,6 @@
+import glob
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -16,6 +18,31 @@ log = logging.getLogger(__name__)
 _USBRESET = "/usr/bin/usbreset"
 _DONGLE_USB_ID = "0bda:2838"  # Nooelec NESDR SMArt v5 (RTL2838)
 _DONGLE_SETTLE_S = 3.0
+
+
+def dongle_present() -> bool:
+    """True if the Nooelec is enumerated on the USB bus right now.
+
+    Distinguishes a *physically gone* dongle (USB over-current / a wedge so hard
+    it dropped off the bus and won't re-enumerate — `device descriptor read,
+    error -110`) from one that's merely tuner-wedged but still enumerated (the
+    rtl_fm<->SDRTrunk I2C hand-off case that reset_dongle clears). When it's gone,
+    a USB reset can't help (`usbreset` returns "No such device found") and
+    restarting SDRTrunk just yields "No Tuner Available" on a ~15s loop — so the
+    scheduler backs off instead (see Scheduler._loop). Reads sysfs directly; no
+    subprocess, safe to poll.
+    """
+    vid, pid = (x.lower() for x in _DONGLE_USB_ID.split(":"))
+    for vid_path in glob.glob("/sys/bus/usb/devices/*/idVendor"):
+        try:
+            if open(vid_path).read().strip().lower() != vid:
+                continue
+            pid_path = os.path.join(os.path.dirname(vid_path), "idProduct")
+            if open(pid_path).read().strip().lower() == pid:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def reset_dongle(settle_s: float = _DONGLE_SETTLE_S) -> None:
