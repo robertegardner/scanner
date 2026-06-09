@@ -19,9 +19,12 @@ reception jobs that don't need continuous receive time:
 
 - **EMS scanner** — Cape County MOSWIN P25 Phase II trunked, 769.16875 MHz
   control channel. Runs via SDRTrunk headless. (Needs discone on 700 MHz.)
-- **NOAA APT** — 137 MHz satellite imagery during predicted passes.
 - **Aviation AM** — 118–137 MHz manual listening. Currently the primary use.
 - **AIS, ACARS** — planned, stubbed.
+
+(NOAA APT was removed 2026-06-08 — the discone can't hear a 137 MHz LEO sat;
+weather-sat imagery moved to the sibling radio project as Meteor LRPT on a
+V-dipole.)
 
 A scheduler owns the SDR exclusively and dispatches jobs by priority with
 preemption. A Flask UI lets the operator see status, tune presets, listen
@@ -44,7 +47,6 @@ writes, deploy-from-source (no symlinks).
                     │   - owns the SDR             │
                     │   - priority queue           │
                     │   - dispatch + preemption    │
-                    │   - NOAA pass watcher        │
                     │   - RecordingManager         │
                     │   - audio_squelch state      │
                     └────────────┬─────────────────┘
@@ -58,7 +60,7 @@ writes, deploy-from-source (no symlinks).
        │  scanner-ui (Flask)          │  port 8081
        │  ────────────────            │
        │  - dashboard, presets        │
-       │  - /recordings, /gallery     │
+       │  - /recordings, /calls       │
        │  - proxies to scheduler API  │
        └──────────────────────────────┘
 
@@ -67,8 +69,8 @@ writes, deploy-from-source (no symlinks).
        - /monitor.mp3  ← MonitorJob (rtl_fm → ffmpeg → Icecast)
 ```
 
-**Job priorities:** ManualJob 10 (highest) > MonitorJob 3 > NOAAJob 5
-(wait, NOAA is 5 — preempts monitor) > EMSJob 1 (lowest, requeues itself).
+**Job priorities:** ManualJob 10 (highest) > MonitorJob 3 > EMSJob 1
+(lowest, requeues itself).
 
 ## Repo layout
 
@@ -90,18 +92,15 @@ writes, deploy-from-source (no symlinks).
     │   ├── jobs/
     │   │   ├── __init__.py         ← Job ABC, JobResult dataclass
     │   │   ├── ems_scanner.py      ← SDRTrunk subprocess wrapper
-    │   │   ├── noaa_apt.py         ← rtl_fm → sox WAV → noaa-apt PNG decode
     │   │   ├── ais_poll.py         ← STUB (Stage 6)
     │   │   └── acars_poll.py       ← STUB (Stage 7)
     │   ├── lib/
-    │   │   ├── pass_predictor.py   ← pyorbital wrapper, TLE refresh
     │   │   ├── queue.py            ← priority heap
     │   │   └── sdr.py              ← SDRToken ownership marker
     │   └── templates/
     │       ├── index.html          ← dashboard with presets, record, squelch
     │       ├── monitor.html        ← dedicated tuner page
     │       ├── recordings.html     ← MP3 list + disk usage
-    │       ├── gallery.html        ← NOAA images
     │       └── calls.html          ← EMS call log
     └── etc/
         ├── scanner/
@@ -119,7 +118,6 @@ restarts the systemd units. NOT symlinked — explicit deploy step.
 
 **Persistent state** (NOT in repo):
 - `/var/lib/scanner/SDRTrunk/` — SDRTrunk playlist + recordings
-- `/var/lib/scanner/noaa/` — captured WAVs and decoded PNGs
 - `/var/lib/scanner/manual/` — ManualJob raw WAV captures
 - `/var/lib/scanner/recordings/` — Record-button MP3 captures
 - `/etc/scanner/config.env` — copied from example, edited in place
@@ -204,7 +202,7 @@ sudo journalctl -u scanner-scheduler -f
 # Push code changes
 sudo /srv/scanner/deploy.sh
 
-# Toggle scheduler autopilot (EMS auto-start + NOAA pass queue)
+# Toggle scheduler autopilot (EMS auto-start)
 sudo sed -i 's|^SCHEDULER_AUTOPILOT=.*|SCHEDULER_AUTOPILOT=false|' /etc/scanner/config.env
 sudo systemctl restart scanner-scheduler
 

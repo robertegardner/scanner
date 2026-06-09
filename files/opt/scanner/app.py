@@ -1,6 +1,6 @@
 """Scanner Flask UI — port 8081.
 
-Serves the dashboard and gallery. All live data proxies to the scheduler
+Serves the dashboard. All live data proxies to the scheduler
 running on localhost:SCHEDULER_PORT.
 """
 import json
@@ -18,7 +18,6 @@ SCHEDULER_URL = f"http://127.0.0.1:{os.environ.get('SCHEDULER_PORT', '8082')}"
 EMS_RECORDINGS_DIR = Path(os.environ.get("EMS_RECORDINGS_DIR", "/var/lib/scanner/ems/recordings"))
 MANUAL_RECORDINGS_DIR = Path(os.environ.get("MANUAL_RECORDINGS_DIR", "/var/lib/scanner/manual"))
 RECORDINGS_DIR = Path(os.environ.get("RECORDINGS_DIR", "/var/lib/scanner/recordings"))
-NOAA_DATA_DIR = Path(os.environ.get("NOAA_DATA_DIR", "/var/lib/scanner/noaa"))
 ICECAST_STREAM_URL = os.environ.get("ICECAST_STREAM_URL", "")
 MONITOR_STREAM_URL = os.environ.get("MONITOR_STREAM_URL", "")
 MONITOR_DEFAULT_DURATION_S = int(os.environ.get("MONITOR_DEFAULT_DURATION_S", "600"))
@@ -109,26 +108,6 @@ def index():
         monitor_stream_url=MONITOR_STREAM_URL,
         monitor_default_duration_s=MONITOR_DEFAULT_DURATION_S,
     )
-
-
-@app.route("/gallery")
-def gallery():
-    images = []
-    img_dir = NOAA_DATA_DIR / "images"
-    if img_dir.exists():
-        for day_dir in sorted(img_dir.iterdir(), reverse=True):
-            if day_dir.is_dir():
-                for img in sorted(day_dir.glob("*.png"), reverse=True):
-                    size = img.stat().st_size
-                    if size < 10240:  # skip 0-byte or corrupt decode artifacts
-                        continue
-                    images.append({
-                        "date": day_dir.name,
-                        "filename": img.name,
-                        "url": f"/noaa/{day_dir.name}/{img.name}",
-                        "size_kb": round(size / 1024),
-                    })
-    return render_template("gallery.html", images=images)
 
 
 @app.route("/calls")
@@ -236,11 +215,6 @@ def api_calls():
     return jsonify(_sched(f"/calls?limit={limit}"))
 
 
-@app.route("/api/passes")
-def api_passes():
-    return jsonify(_sched("/passes"))
-
-
 @app.route("/api/transcribe")
 def api_transcribe():
     """Latest live caption (written by scanner-transcribe to tmpfs)."""
@@ -344,16 +318,6 @@ def serve_recording(filename: str):
     if not path.exists() or path.suffix != ".mp3":
         abort(404)
     return send_file(path, mimetype="audio/mpeg")
-
-
-@app.route("/noaa/<date>/<filename>")
-def serve_noaa_image(date: str, filename: str):
-    path = (NOAA_DATA_DIR / "images" / date / filename).resolve()
-    if not str(path).startswith(str(NOAA_DATA_DIR.resolve())):
-        abort(403)
-    if not path.exists():
-        abort(404)
-    return send_file(path, mimetype="image/png")
 
 
 if __name__ == "__main__":
