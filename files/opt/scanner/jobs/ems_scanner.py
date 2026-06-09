@@ -31,6 +31,7 @@ _RESTART_BACKOFF_S = 10.0    # pause before failing out, so we don't hammer a fl
 class EMSJob(Job):
     name = "ems_scanner"
     priority = 1
+    sdr_tool = "sdrtrunk"
 
     def __init__(self, config: "Config"):  # noqa: F821
         self._config = config

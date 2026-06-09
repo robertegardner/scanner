@@ -574,13 +574,20 @@ class Scheduler:
         self._sdr = SDRToken()
         self._current_job: Optional[Job] = None
         self._current_thread: Optional[threading.Thread] = None
-        # Name of the last job that actually held the dongle, or None when the
-        # dongle has freshly (re)enumerated and no job has held it since. Gates
-        # the pre-acquire reset_dongle() — see _loop. Reset to None whenever the
-        # dongle goes missing, so the first acquire after a replug skips the
-        # reset (a clean dongle has nothing to un-wedge, and usbreset-ing this
-        # aging unit while it's healthy is what knocks it off the bus).
+        # Pre-acquire reset_dongle() gating state — see _loop. Together these
+        # let us USB-reset only when it actually clears something, sparing this
+        # aging dongle resets it doesn't need (a needless usbreset on a healthy
+        # unit is what knocks it off the bus with error -71):
+        #   _dongle_held_by — name of the last job that held the dongle, or None
+        #     when it has freshly (re)enumerated and nothing has held it since
+        #     (boot / replug / post-absence). None => skip the reset.
+        #   _last_tool      — that holder's sdr_tool; a change across the hand-off
+        #     (rtl_fm<->SDRTrunk) is the documented R820T wedge trigger => reset.
+        #   _last_result    — that holder's JobResult; a failed/None run may have
+        #     left a wedge (e.g. EMS tuner fault) => reset before retrying.
         self._dongle_held_by: Optional[str] = None
+        self._last_tool: Optional[str] = None
+        self._last_result: Optional[JobResult] = None
         self._preempt_signal = threading.Event()
         self._lock = threading.Lock()
         self._activity: deque[dict] = deque(maxlen=100)
@@ -653,6 +660,7 @@ class Scheduler:
                 # When it returns it'll be freshly enumerated — don't usbreset it
                 # on the first acquire (see reset_dongle gating below).
                 self._dongle_held_by = None
+                self._last_tool = None
                 self._requeue_if_due(job)
                 self._preempt_signal.wait(timeout=_NO_DONGLE_COOLDOWN_S)
                 continue
@@ -660,22 +668,34 @@ class Scheduler:
             with self._lock:
                 self._current_job = job
 
+            # Decide whether to USB-reset before this job opens the dongle. A
+            # reset only clears something real on the rtl_fm<->SDRTrunk swap (the
+            # hand-off that intermittently wedges the R820T) or after the prior
+            # holder faulted (which may have left a wedge). Same-tool, clean
+            # hand-offs (an rtl_fm retune, a squelch-toggle restart, a clean EMS
+            # restart) close/reopen the device cleanly — resetting there is pure
+            # risk on this degrading dongle (a needless usbreset is what drops it
+            # off the bus, error -71). ~3s when it does run.
+            incoming_tool = getattr(job, "sdr_tool", "rtl_fm")
+            if self._dongle_held_by is None:
+                need_reset, why = False, "dongle freshly enumerated, no prior owner to clear"
+            elif incoming_tool != self._last_tool:
+                need_reset, why = True, f"tool change {self._last_tool}->{incoming_tool}"
+            elif not (self._last_result and self._last_result.success):
+                need_reset, why = True, f"previous job ({self._dongle_held_by}) faulted"
+            else:
+                need_reset, why = False, f"same tool ({incoming_tool}), prior run clean"
+
             self._sdr.acquire(job.name)
             log.info("Starting job: %s", job.name)
-            # Clear any wedged RTL state left by the *previous* job before this
-            # one opens the dongle — the rtl_fm<->SDRTrunk (and NOAA/manual)
-            # hand-off intermittently wedges the R820T, and a USB reset is the
-            # only thing that clears it. But only do this on an actual hand-off:
-            # on the first acquire after the dongle freshly enumerated (boot or
-            # replug) there's no prior owner and nothing to un-wedge, and
-            # usbreset-ing this degrading dongle while it's healthy is exactly
-            # what drops it off the bus (error -71 -> unenumerated). ~3s.
-            if self._dongle_held_by is not None:
+            if need_reset:
+                log.info("Pre-acquire USB reset for %s — %s", job.name, why)
                 reset_dongle()
             else:
-                log.info("Skipping pre-acquire reset for %s — dongle freshly "
-                         "enumerated, no prior owner to clear", job.name)
+                log.info("Skipping pre-acquire reset for %s — %s", job.name, why)
 
+            # _run_job clears _last_result before the job runs, so a job that
+            # raises leaves it None — treated as a fault above (reset on retry).
             t = threading.Thread(target=self._run_job, args=(job,), daemon=True)
             with self._lock:
                 self._current_thread = t
@@ -683,9 +703,10 @@ class Scheduler:
             t.join()
 
             self._sdr.release()
-            # A job held the dongle, so the next acquire is a genuine hand-off
-            # and should reset_dongle() to clear any wedge it leaves behind.
+            # Record what held the dongle so the next iteration can decide
+            # whether the upcoming hand-off needs a reset (see gate above).
             self._dongle_held_by = job.name
+            self._last_tool = incoming_tool
 
             with self._lock:
                 self._current_job = None
@@ -758,7 +779,12 @@ class Scheduler:
 
     def _run_job(self, job: Job) -> None:
         started = datetime.now()
+        # Cleared before the run so a job that raises out of run() leaves this
+        # None — the pre-acquire gate in _loop reads None as a fault and resets
+        # the dongle before the next acquire. join() guarantees visibility.
+        self._last_result = None
         result = job.run(self._preempt_signal)
+        self._last_result = result
         elapsed = (datetime.now() - started).total_seconds()
         entry = {
             "ts": started.isoformat(timespec="seconds"),
