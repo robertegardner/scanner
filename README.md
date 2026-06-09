@@ -4,9 +4,13 @@ Multi-purpose secondary SDR receiver for the Cape Girardeau attic homelab Pi.
 Time-slices a single RTL-SDR dongle across several jobs:
 
 - **EMS / public safety scanning** — Cape Girardeau County MOSWIN P25 system on VHF
-- **NOAA APT weather satellite imagery** — passes captured automatically on schedule
+- **Aviation AM monitoring** — 118–137 MHz manual listening
 - **AIS marine traffic** — Mississippi River vessel tracking
 - **ACARS** — aircraft text message decoding (optional)
+
+(NOAA APT weather-satellite imagery was removed 2026-06-08 — the discone can't
+hear a 137 MHz LEO sat; that work moved to the sibling radio project as Meteor
+LRPT on a V-dipole.)
 
 Lives on the same Pi as the radio project at `/srv/radio`. Separate repo, separate
 codebase, separate deployment — they only share the hardware. The radio uses the

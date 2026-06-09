@@ -46,8 +46,7 @@ Nooelec** — no relay, no antenna change, because the discone covers both bands
 Switching sources preempts on the single SDR via the scheduler
 (`Scheduler.start_moswin()` / `/source/moswin`; EMS is the lowest-priority job so
 switching back to MOSWIN stops the monitor and queues EMS). Works with
-`SCHEDULER_AUTOPILOT=false`. **NOAA is intentionally left offline** — the discone
-physically can't hear 137 MHz LEO sats (see the NOAA APT notes / CLAUDE.md).
+`SCHEDULER_AUTOPILOT=false`.
 
 ---
 
@@ -169,9 +168,8 @@ findings change that calculus:
    source-switching on the one antenna** (the `/listen` page) — **no relay
    required** for them.
 2. The relay's remaining value is only to add a *band-optimized* antenna later
-   (e.g. a 137 MHz RHCP QFH for NOAA APT, which the discone can't do at all, or a
-   tuned 700 MHz gain antenna). It is **not** a prerequisite for listening to
-   MOSWIN or aviation today.
+   (e.g. a tuned 700 MHz gain antenna to lift P25 decode margin). It is **not** a
+   prerequisite for listening to MOSWIN or aviation today.
 
 **Net: GO on MOSWIN reception (excellent), but the relay is deferred** — it's a
 future enhancement for adding dedicated antennas, not a blocker.

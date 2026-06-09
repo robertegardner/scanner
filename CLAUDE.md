@@ -11,7 +11,7 @@ several radio reception jobs that don't need continuous receive time. A
 scheduler owns the SDR; jobs are plugin-style modules.
 
 A Flask web UI lets the operator see what's running, override the scheduler
-to listen to anything manually, and browse captured artifacts (NOAA images,
+to listen to anything manually, and browse captured artifacts (EMS call log,
 AIS history, ACARS logs).
 
 This project shares hardware with the FM/AM broadcast radio project at
@@ -56,14 +56,13 @@ mistake false-restarted EMS every ~50s; fixed in c7f659d). Full writeup:
 `notes/2026-06-07-moswin-tuner-wedge-fix.md`.
 
 **Implemented + live:**
-- Scheduler with priority preemption, EMS job (SDRTrunk), NOAA APT job,
+- Scheduler with priority preemption, EMS job (SDRTrunk),
   ManualJob (raw WAV capture), MonitorJob (live ffmpeg → Icecast stream).
-- Pass predictor with TLE auto-refresh; NOAA passes auto-queue ~5 min before AOS.
 - Flask web UI on port 8081: dashboard with status/queue/activity,
   Aviation + Cape County preset banks, live monitor stream player,
   Record button + `/recordings` MP3 library with disk-usage warning,
   separate `/monitor` tuner page, `/calls` (EMS call log, now with a
-  transcript column), `/transcript` (transcript log), `/gallery` (NOAA images).
+  transcript column), `/transcript` (transcript log).
 - Audio post-processing chain (ffmpeg) for the live monitor: AM uses
   band-limit + **de-ring notches** + agate squelch + compand + dynaudnorm +
   alimiter; FM uses a gentler chain. All filters live in env vars
@@ -91,7 +90,7 @@ mistake false-restarted EMS every ~50s; fixed in c7f659d). Full writeup:
   antenna-side (reposition discone / dedicated airband antenna). **Tower presets
   use RF gain 40** (dashboard `index.html`); `/api/monitor/tune` defaults to 20.
 - `SCHEDULER_AUTOPILOT=false` mode: scheduler stays idle, no EMS
-  auto-start, no NOAA passes queued. The HTTP API stays up for manual
+  auto-start. The HTTP API stays up for manual
   tuning. Flip via `/etc/scanner/config.env` and restart.
 - **Transcription** (`scanner-transcribe.service`, PR #5): Whisper captions +
   EMS call text. The Pi has no GPU, so it **reuses the radio's remote
@@ -110,27 +109,20 @@ mistake false-restarted EMS every ~50s; fixed in c7f659d). Full writeup:
 
 **Hardware:**
 - Discone connected and in use for aviation AM (118–137 MHz). It works great
-  for aviation but is **confirmed unusable for NOAA APT** (see below) — a 137 MHz
-  QFH/turnstile (or at minimum a dipole) is required before APT can work.
+  for aviation.
 - Spectrum scan via `rtl_power` confirms a healthy aviation band with
   20+ active ARTCC/approach channels above the noise floor in a
   weekday-morning window. KCGI tower (125.525) traffic confirmed audible.
 
-**NOAA APT status (2026-06-01): CONFIRMED BLOCKER is the antenna, not software.**
-Two independent diagnostics settle it:
-- A 47° NOAA-15 capture (corrected recipe `-s 60000 -F 9 -A fast -g 40`) was
-  pure noise — flat spectrogram, RMS dead flat across the pass, no TCA bulge.
-- An `rtl_power` Doppler sweep over the **83.8° near-overhead NOAA-18 pass**
-  (best possible geometry, max gain 49.6) detected **no carrier at all**:
-  in-band power (±18 kHz around 137.9125 MHz) never rose above the edge-noise
-  floor — max band-SNR **0.02 dB**, flat the whole pass, zero Doppler drift.
-Two passes, two elevations, two gains, all flat. The receive chain is healthy
-(aviation AM at 132 MHz is solid daily), so the discone physically cannot hear a
-137 MHz LEO satellite even at zenith — its zenith null + vertical-vs-RHCP
-polarization mismatch is the cause. The `noaa_apt.py` recipe fix is validated and
-ready; it is **intentionally not deployed** because it cannot produce images until
-a proper 137 MHz RHCP antenna (QFH/turnstile) is installed. Raw artifacts +
-analysis: `/var/lib/scanner/aptpower/{sweep.csv,run.log}`.
+**NOAA APT REMOVED (2026-06-08).** The APT birds (NOAA-15/18/19) are
+end-of-life, and the discone physically can't hear a 137 MHz LEO sat anyway
+(confirmed 2026-06-01: two passes flat, an 83.8° near-overhead NOAA-18 Doppler
+sweep showed max band-SNR 0.02 dB — its zenith null + vertical-vs-RHCP mismatch).
+**Weather-satellite imagery moved to the radio project** (Meteor LRPT on a
+V-dipole on the SDRplay RSPdx-R2). All NOAA APT code (`jobs/noaa_apt.py`,
+`lib/pass_predictor.py`, the scheduler pass-watcher, `/gallery`, `/passes`,
+pyorbital + the noaa-apt binary, TLE handling) was deleted from this repo; this
+project no longer does any satellite work.
 
 **Known stubs:**
 - `jobs/ais_poll.py` — Stage 6
@@ -138,19 +130,7 @@ analysis: `/var/lib/scanner/aptpower/{sweep.csv,run.log}`.
 - P25 trunked decoding integration via SDRTrunk works for EMS but
   requires discone repositioned to 700 MHz.
 
-**TLE auto-refresh (fixed 2026-05-31, PR #1 `fix-tle-refresh`):** the pass
-watcher — the only caller that refreshes TLEs — used to start only under
-autopilot, so with `SCHEDULER_AUTOPILOT=false` the cache went stale and
-`/passes` was empty in manual mode. Now the watcher always runs (only NOAA job
-*queueing* is autopilot-gated), and `update_tles()` fetches the combined
-`GROUP=weather` file in one request with a 1-hour retry backoff instead of three
-per-object requests every 60s. NOTE: celestrak.org is currently IP-unreachable
-from the Pi (likely a rate-limit ban from the old hammering); the polite client
-should fall off it and auto-refresh once celestrak responds. `gh` CLI is now
-installed and authenticated on the Pi (as `robertegardner`).
-
-**Next work:** install a 137 MHz QFH/turnstile (the confirmed NOAA APT blocker),
-then deploy the validated `noaa_apt.py` recipe fix; AIS poll job (Stage 6);
+**Next work:** AIS poll job (Stage 6);
 antenna-switching automation (currently manual); MOSWIN listening when discone is
 on 700 MHz.
 
@@ -175,16 +155,13 @@ on 700 MHz.
     │   ├── jobs/                      ← plugin-style job implementations
     │   │   ├── __init__.py
     │   │   ├── ems_scanner.py         ← P25 trunked decoder, MOSWIN talkgroups
-    │   │   ├── noaa_apt.py            ← satellite pass capture + image decode
     │   │   ├── ais_poll.py            ← marine AIS polling
     │   │   └── acars_poll.py          ← optional, aircraft text messages
     │   ├── lib/
     │   │   ├── sdr.py                 ← SDR ownership / locking primitives
-    │   │   ├── pass_predictor.py      ← NOAA orbital ephemeris (pyorbital wrapper)
     │   │   └── queue.py               ← job queue with priority preemption
     │   └── templates/
-    │       ├── index.html             ← dashboard
-    │       └── gallery.html           ← NOAA image gallery
+    │       └── index.html             ← dashboard
     └── etc/
         ├── systemd/system/
         │   ├── scanner-scheduler.service
@@ -210,20 +187,22 @@ installed copy in `/opt/scanner/`, push via `deploy.sh`. Not symlinked.
   no sharing.
 - One wideband antenna covers all the jobs, but frequency range is wider
   than originally assumed:
-  - NOAA APT: 137 MHz
+  - Aviation AM: 118–137 MHz
   - ACARS: 131.4-131.7 MHz
   - AIS: 161.975 + 162.025 MHz
   - NOAA WX: 162 MHz (deprioritized — phone alerts handle this)
   - MOSWIN P25 (Cape County): 769–771 MHz (700 MHz band, NOT VHF)
   A discone rated 25–1300 MHz covers all of these. A VHF dipole
   tuned for 140 MHz will NOT receive the 700 MHz MOSWIN signal.
+  (NOAA APT weather-sat reception at 137 MHz was removed — moved to the
+  radio project; see Status.)
 
 ## Design conventions
 
 Match the radio project for consistency:
 
-- **Python:** stdlib + Flask + requests + a few job-specific libraries
-  (`pyorbital`, `noaa-apt-decoder`, etc.). Keep deps minimal.
+- **Python:** stdlib + Flask + requests + a few job-specific libraries.
+  Keep deps minimal.
 - **State files use atomic writes** (write `.tmp`, then `os.replace()`).
 - **`/run/scanner/*`** is transient (tmpfs); persistent state in `/var/lib/scanner/`.
 - **The Flask app never owns the SDR directly.** It talks to the scheduler
@@ -250,10 +229,9 @@ The scheduler is the heart of the system:
                 │   │  Job queue (priority sorted) │     │
                 │   ├──────────────────────────────┤     │
                 │   │ 1. manual override (highest) │     │
-                │   │ 2. NOAA pass (scheduled)     │     │
-                │   │ 3. AIS poll (scheduled)      │     │
-                │   │ 4. ACARS poll (scheduled)    │     │
-                │   │ 5. EMS scanner (default)     │     │
+                │   │ 2. AIS poll (scheduled)      │     │
+                │   │ 3. ACARS poll (scheduled)    │     │
+                │   │ 4. EMS scanner (default)     │     │
                 │   └──────────────────────────────┘     │
                 └────────────────┬───────────────────────┘
                                  │ owns
@@ -274,8 +252,7 @@ The scheduler is the heart of the system:
 ### Default behavior
 
 When nothing higher-priority is scheduled, the scheduler runs the EMS scanner
-job. NOAA passes are predicted via orbital ephemeris and queued automatically.
-AIS and ACARS polls are scheduled by cron-like triggers (every N minutes).
+job. AIS and ACARS polls are scheduled by cron-like triggers (every N minutes).
 Manual overrides from the UI inject into the queue at top priority.
 
 ### Why a scheduler instead of just systemd timers
@@ -283,9 +260,10 @@ Manual overrides from the UI inject into the queue at top priority.
 Two reasons:
 1. **Exclusive SDR access.** Multiple services trying to open the same device
    would conflict. The scheduler centralizes that.
-2. **Preemption logic.** A NOAA pass should interrupt the EMS scanner mid-stream
-   if it's running. systemd's `Conflicts=` directive can do this but gets fiddly
-   with many interacting services; one Python process with a queue is simpler.
+2. **Preemption logic.** A scheduled poll (or manual tune) should interrupt the
+   EMS scanner mid-stream if it's running. systemd's `Conflicts=` directive can
+   do this but gets fiddly with many interacting services; one Python process
+   with a queue is simpler.
 
 ### Job interface (planned)
 
@@ -294,7 +272,7 @@ dispatch them uniformly:
 
 ```python
 class Job:
-    name: str          # e.g. "noaa_apt"
+    name: str          # e.g. "ems_scanner"
     priority: int      # higher = preempts lower
     duration_s: int    # how long it'll hold the SDR
 
@@ -338,28 +316,14 @@ TBD), log all calls to disk with timestamps and talkgroup labels.
 be in the clear as of project planning (Nov 2025). Verify on RadioReference
 before deployment.
 
-### NOAA APT (scheduled)
+### NOAA APT — REMOVED (2026-06-08)
 
-**Satellites:** NOAA-15 (137.620 MHz), NOAA-18 (137.9125 MHz), NOAA-19
-(137.100 MHz). All polar-orbiting, ~6 passes per day over Cape Girardeau
-combined. Each pass is 10-15 minutes.
-
-**Software:** `noaa-apt` (Rust) for image decoding. `pyorbital` for pass
-prediction from TLE data. TLEs auto-update from celestrak.org or similar.
-
-**Pipeline:**
-1. Predictor maintains a list of upcoming passes
-2. Scheduler queues a pass ~5 min before AOS (acquisition of signal)
-3. Job tunes 137.x MHz at LOS-zenith time, records raw audio for the pass
-   duration to a WAV file
-4. After LOS, job decodes WAV to PNG image, optionally applies false-color
-   maps, saves to `/var/lib/scanner/noaa/`
-
-**Output:** dated/numbered PNG image per pass. Browse via the gallery page.
-
-**Caveats:** NOAA-15/18/19 are well past design life. Could be decommissioned
-any time. Probably years away but worth tracking. MetOp-B/C transmit a
-similar mode (LRPT) but at 1.7 GHz and require a different antenna.
+Weather-satellite imagery is **no longer part of this project.** NOAA-15/18/19
+APT was removed because the birds are end-of-life and the discone physically
+can't hear a 137 MHz LEO sat (zenith null + vertical-vs-RHCP polarization
+mismatch — see Status). Weather-sat work moved to the sibling **radio project**
+(Meteor LRPT on a V-dipole on the SDRplay RSPdx-R2). All code, the pass
+predictor, the `/gallery` page, pyorbital, and the noaa-apt binary are gone.
 
 ### AIS poll (scheduled, low priority)
 
@@ -397,7 +361,6 @@ Phone alerts handle SAME alerts well. Decoding weather radio adds little.
 
 **Pages (planned):**
 - `/` — dashboard: current job, schedule, manual override controls
-- `/gallery` — NOAA image gallery
 - `/calls` — EMS call log with playback
 - `/ships` — AIS history (with optional map)
 
@@ -405,7 +368,6 @@ Phone alerts handle SAME alerts well. Decoding weather radio adds little.
 - `GET /api/status` — current job, queue, next scheduled item
 - `POST /api/override` — preempt scheduler with manual tune
 - `POST /api/release` — release manual override
-- `GET /api/passes` — upcoming NOAA passes
 - `GET /api/calls?recent=N` — recent EMS calls
 
 ## Common operations
@@ -418,9 +380,6 @@ sudo journalctl -u scanner-scheduler -f
 
 # Reload code after editing
 sudo /srv/scanner/deploy.sh
-
-# Update NOAA TLEs (cron job, but manual run):
-sudo -u scanner /opt/scanner/scripts/update_tles.sh
 
 # Force a manual tune from CLI
 curl -X POST http://localhost:8081/api/override \
@@ -467,8 +426,7 @@ Same gotchas as the radio project:
 
 - `*.env` files in `files/etc/scanner/`
 - `talkgroups.json` (the actual one, not `.example`)
-- NOAA TLE cache files
-- Captured artifacts (`/var/lib/scanner/noaa/*.png`, AIS logs, etc.)
+- Captured artifacts (EMS call recordings, AIS logs, etc.)
 - The `.claude/` directory if Claude Code creates one
 
 ## Open design questions for first build session
@@ -482,10 +440,7 @@ These should be resolved when implementation actually begins:
    own systemd unit and use it as an external consumer of the SDR
    (in which case the scheduler shuts it down before other jobs and
    restarts it after)?
-3. **NOAA pass scheduling resolution.** Predict at 1-second granularity?
-   1-minute? Some passes are very low elevation and not worth capturing.
-   Configurable minimum elevation threshold (probably ~20°).
-4. **AIS database vs. feeding service.** Just log NMEA locally, or also
+3. **AIS database vs. feeding service.** Just log NMEA locally, or also
    send to MarineTraffic? Latter requires their API and an account.
 5. **Talkgroup discovery.** Hard-code the list from RadioReference, or
    auto-detect from the control channel and let user label them in the UI?

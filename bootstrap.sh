@@ -62,9 +62,6 @@ install -d -o scanner -g scanner -m 755 \
   /var/lib/scanner/sdrtrunk \
   /var/lib/scanner/sdrtrunk/recordings \
   /var/lib/scanner/sdrtrunk/playlists \
-  /var/lib/scanner/noaa \
-  /var/lib/scanner/noaa/images \
-  /var/lib/scanner/noaa/raw \
   /var/lib/scanner/manual \
   /etc/scanner
 
@@ -74,7 +71,7 @@ install -d -o scanner -g scanner -m 755 \
 log "Creating Python virtual environment"
 python3 -m venv /opt/scanner/venv
 /opt/scanner/venv/bin/pip install --quiet --upgrade pip
-/opt/scanner/venv/bin/pip install --quiet flask requests pyorbital
+/opt/scanner/venv/bin/pip install --quiet flask requests
 
 # ---------------------------------------------------------------------------
 # 5. SDRTrunk
@@ -153,27 +150,6 @@ if [[ ! -f "$PLAYLIST" ]]; then
   log "  Cape County MOSWIN control channel frequency in Hz (from radioreference.com)"
 else
   log "SDRTrunk playlist already exists — not overwriting"
-fi
-
-# ---------------------------------------------------------------------------
-# 7. noaa-apt
-# ---------------------------------------------------------------------------
-NOAA_APT_VERSION="1.4.1"
-NOAA_APT_BIN="/usr/local/bin/noaa-apt"
-
-if [[ ! -f "$NOAA_APT_BIN" ]]; then
-  log "Downloading noaa-apt v${NOAA_APT_VERSION} (aarch64)"
-  TMP=$(mktemp -d)
-  curl -L --progress-bar \
-    "https://github.com/martinber/noaa-apt/releases/download/v${NOAA_APT_VERSION}/noaa-apt-${NOAA_APT_VERSION}-aarch64-linux-gnu-nogui.zip" \
-    -o "$TMP/noaa-apt.zip"
-  unzip -q "$TMP/noaa-apt.zip" -d "$TMP/noaa-apt-extracted"
-  find "$TMP/noaa-apt-extracted" -name "noaa-apt" -type f \
-    -exec install -m 755 {} "$NOAA_APT_BIN" \;
-  rm -rf "$TMP"
-  log "noaa-apt installed at $NOAA_APT_BIN"
-else
-  log "noaa-apt already installed — skipping"
 fi
 
 # ---------------------------------------------------------------------------
