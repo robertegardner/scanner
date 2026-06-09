@@ -4,8 +4,14 @@ Staged implementation. Each stage produces something useful on its own,
 so we can stop at any point and have a working system at that level.
 
 **Current state (2026-05-23):** Stages 0–5 complete and running.
-VHF dipole connected (works for NOAA APT). Discone arriving soon for MOSWIN 700 MHz.
-Next: verify NOAA images, then MOSWIN decoding, then Stage 6 (AIS).
+Discone connected for MOSWIN 700 MHz + aviation AM.
+Next: Stage 6 (AIS).
+
+**NOAA APT removed (2026-06-08):** the original Stage 3 / Stage 4 NOAA APT work
+(below) is no longer part of this project — the discone can't hear a 137 MHz LEO
+sat, so weather-sat imagery moved to the sibling radio project (Meteor LRPT on a
+V-dipole). The historical stages are left in place for narrative continuity but
+marked removed; the scheduler runs EMS by default with no NOAA pass watcher.
 
 ## Stage 0 — Hardware ready ✓
 
@@ -103,36 +109,30 @@ The dashboard is at `http://<pi-ip>:8081/`.
 **Done when:** you see P25 control channel decoding in the logs and at least
 one EMS call recording on disk.
 
-## Stage 3 — Standalone NOAA APT ✓
+## Stage 3 — Standalone NOAA APT ✓ (REMOVED 2026-06-08)
 
-Same idea — get satellite imagery capture working as a one-shot before
-worrying about scheduling.
-
-**Actions:**
-1. Install `noaa-apt` from Cargo or precompiled binary
-2. Install `pyorbital` for pass prediction
-3. Write a script that captures a single named pass: tune 137.x MHz, record
-   for N seconds, save raw WAV
-4. Decode WAV to PNG, store in `/var/lib/scanner/noaa/`
-5. Test manually: predict the next pass, kill the EMS scanner from Stage 2,
-   run the capture script, validate the output
-
-**Done when:** you have at least one decoded image from one real pass.
+This stage built a one-shot NOAA APT satellite-imagery capture (`pyorbital`
+pass prediction + `noaa-apt` WAV→PNG decode). It has since been **removed** —
+the discone can't physically receive a 137 MHz LEO sat, so weather-sat imagery
+moved to the sibling radio project (Meteor LRPT on a V-dipole). The job module,
+pass predictor, gallery, and TLE plumbing are all gone.
 
 ## Stage 4 — Scheduler MVP ✓
 
-Now wire Stages 2 and 3 together with a scheduler that owns the SDR.
+Wire the EMS scanner together with a scheduler that owns the SDR.
 
 **Actions:**
 1. Build the scheduler skeleton with a priority queue
 2. Wrap the EMS scanner from Stage 2 as a Job class (priority 1, perpetual)
-3. Wrap the NOAA APT from Stage 3 as a Job class (priority 5, scheduled per pass)
-4. Pass-predictor service that injects upcoming NOAA passes into the queue
-5. systemd unit for the scheduler
-6. Update Stage 2's EMS scanner to be preempt-able
+3. systemd unit for the scheduler
+4. Update Stage 2's EMS scanner to be preempt-able
 
-**Done when:** the scheduler runs EMS by default, automatically preempts
-for NOAA passes, and resumes EMS after.
+(Originally this stage also wrapped a NOAA APT job + pass-predictor service that
+injected upcoming passes into the queue; both were removed with Stage 3 — see
+the 2026-06-08 note above.)
+
+**Done when:** the scheduler runs EMS by default and yields to manual overrides,
+then resumes EMS after.
 
 ## Stage 5 — Flask UI ✓
 
@@ -141,9 +141,8 @@ Now we add the dashboard.
 **Actions:**
 1. Flask app on port 8081
 2. Dashboard showing current job and upcoming schedule
-3. NOAA gallery page (lists captured images)
-4. Manual override form: tune to X for Y seconds
-5. NPMplus proxy for `https://scanner.rg2.io` (optional)
+3. Manual override form: tune to X for Y seconds
+4. NPMplus proxy for `https://scanner.rg2.io` (optional)
 
 **Done when:** the dashboard accurately reflects what's running and
 manual overrides work.
@@ -177,9 +176,6 @@ Try this for a week. If interesting, keep it; if not, disable.
 
 Things that improve the system but aren't strictly necessary.
 
-- NOAA TLE auto-update via cron
-- Pass elevation filtering (skip passes below e.g. 20° max elevation)
-- False-color NOAA imagery rendering
 - Calls-log search and filtering
 - AIS map overlay (Leaflet + tile server)
 - Backup/archive script for captured artifacts

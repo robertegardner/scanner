@@ -144,7 +144,6 @@
     <a href="/listen" class="active">Listen</a> &nbsp;
     <a href="/monitor">Monitor</a> &nbsp;
     <a href="/calls">Calls</a> &nbsp;
-    <a href="/gallery">Gallery</a> &nbsp;
     <a href="/recordings">Recordings</a>
   </nav>
 </header>
@@ -491,7 +490,7 @@ renderCats();
     lcdAviation(fm, (detail.split(' — ')[1]||''));
     setStreamLed('on'); playAudio(); setStatus('');
   } else {
-    // Default to MOSWIN (starts it if idle / preempts a non-NOAA job)
+    // Default to MOSWIN (starts it if idle / preempts a monitor or manual tune)
     showPanel();
     await selectMoswin();
   }

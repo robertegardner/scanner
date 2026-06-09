@@ -14,7 +14,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -22,8 +22,6 @@ from flask import Flask, jsonify, request
 
 from jobs import Job, JobResult
 from jobs.ems_scanner import EMSJob
-from jobs.noaa_apt import NOAAJob
-from lib.pass_predictor import upcoming_passes, update_tles
 from lib.queue import JobQueue
 from lib.sdr import SDRToken, dongle_present, reset_dongle
 
@@ -86,7 +84,6 @@ class Config:
     sdrtrunk_bin: str
     sdrtrunk_home: str
     ems_recordings_dir: str
-    noaa_data_dir: str
     manual_recordings_dir: str
     recordings_dir: str
     sdr_device_index: int
@@ -109,7 +106,6 @@ class Config:
             sdrtrunk_bin=os.environ["SDRTRUNK_BIN"],
             sdrtrunk_home=os.environ.get("SDRTRUNK_HOME", "/var/lib/scanner/SDRTrunk"),
             ems_recordings_dir=os.environ.get("EMS_RECORDINGS_DIR", "/var/lib/scanner/ems/recordings"),
-            noaa_data_dir=os.environ.get("NOAA_DATA_DIR", "/var/lib/scanner/noaa"),
             manual_recordings_dir=os.environ.get("MANUAL_RECORDINGS_DIR", "/var/lib/scanner/manual"),
             recordings_dir=os.environ.get("RECORDINGS_DIR", "/var/lib/scanner/recordings"),
             sdr_device_index=int(os.environ.get("SDR_DEVICE_INDEX", "0")),
@@ -284,7 +280,7 @@ class ManualJob(Job):
 class MonitorJob(Job):
     """Live-stream a frequency to an Icecast mount for browser listening."""
     name = "monitor"
-    priority = 3  # preempts EMS (1) but yields to NOAA (5) and manual (10)
+    priority = 3  # preempts EMS (1) but yields to manual (10)
 
     def __init__(self, freq: str, mode: str, gain: int, duration_s: int,
                  label: str, config: Config, squelch: int = 0,
@@ -593,7 +589,6 @@ class Scheduler:
         self._activity: deque[dict] = deque(maxlen=100)
         self._manual_job: Optional[ManualJob] = None
         self._monitor_job: Optional[MonitorJob] = None
-        self._upcoming_passes: list[dict] = []
         self._recorder = RecordingManager(config)
         # Squelch (ffmpeg agate) state — toggled live from the dashboard.
         # New monitor tunes inherit this value unless they override it.
@@ -614,17 +609,13 @@ class Scheduler:
     def start(self) -> None:
         if self._config.autopilot:
             self._queue.push(EMSJob(self._config))
-            log.info("Scheduler started (autopilot ON: EMS default + NOAA passes)")
+            log.info("Scheduler started (autopilot ON: EMS default)")
         elif self._config.ems_default:
             self._queue.push(EMSJob(self._config))
-            log.info("Scheduler started (EMS default ON, NOAA off: MOSWIN runs in "
+            log.info("Scheduler started (EMS default ON: MOSWIN runs in "
                      "background, yields to manual tunes and resumes after)")
         else:
             log.info("Scheduler started (idle until manually tuned)")
-        # Always run the pass watcher: it keeps TLEs fresh and populates the
-        # dashboard's upcoming-pass list in both modes. It only *queues* NOAA
-        # capture jobs when autopilot is on (see _pass_watcher).
-        threading.Thread(target=self._pass_watcher, daemon=True, name="pass-watcher").start()
         threading.Thread(target=self._loop, daemon=True, name="scheduler-loop").start()
 
     def _requeue_if_due(self, job: Job) -> None:
@@ -717,58 +708,6 @@ class Scheduler:
                     self._monitor_job = None
 
             self._requeue_if_due(job)
-
-    def _pass_watcher(self) -> None:
-        """Background thread: predict NOAA passes and queue them ~5 min before AOS."""
-        queued: set[str] = set()
-
-        while True:
-            now = datetime.now(timezone.utc)
-
-            try:
-                passes = upcoming_passes(hours_ahead=24.0)
-            except Exception as e:
-                log.warning("Pass prediction error: %s", e)
-                time.sleep(60)
-                continue
-
-            self._upcoming_passes = [
-                {
-                    "satellite": p.satellite,
-                    "freq_mhz": p.freq_mhz,
-                    "aos": p.aos.isoformat(),
-                    "los": p.los.isoformat(),
-                    "max_el": p.max_el,
-                }
-                for p in passes[:10]
-            ]
-
-            # In manual mode we still predict + refresh TLEs above, but we do
-            # not auto-queue captures — the scheduler stays idle until a manual
-            # tune. Queueing resumes immediately if autopilot is flipped on.
-            for p in (passes if self._config.autopilot else []):
-                key = f"{p.satellite}|{p.aos.isoformat()}"
-                if key in queued:
-                    continue
-                queue_at = p.aos - timedelta(minutes=5)
-                if not (queue_at <= now <= p.los):
-                    continue
-                # Pass is imminent or in progress — calculate remaining duration
-                elapsed = max(0.0, (now - p.aos).total_seconds())
-                duration_s = int((p.los - p.aos).total_seconds()) - int(elapsed) + 30
-                if duration_s < 60:
-                    continue
-                job = NOAAJob(p.satellite, p.freq_mhz, duration_s, self._config)
-                self.push_job(job)
-                queued.add(key)
-                log.info("Queued NOAA pass: %s AOS=%s max_el=%.1f°",
-                         p.satellite, p.aos.strftime("%H:%M UTC"), p.max_el)
-
-            # Expire keys older than 3 hours
-            cutoff = (now - timedelta(hours=3)).isoformat()
-            queued = {k for k in queued if k.split("|")[1] > cutoff}
-
-            time.sleep(60)
 
     def _next_job(self) -> Job:
         while True:
@@ -911,15 +850,13 @@ class Scheduler:
 
         EMS is the lowest-priority job, so it can't preempt a running monitor on
         its own — we stop the current monitor/manual job and queue EMS for the
-        loop to pick up next. A NOAA capture in progress (priority 5) is left
-        alone. Used by the /listen source switcher; works with autopilot off.
+        loop to pick up next. Used by the /listen source switcher; works with
+        autopilot off.
         """
         with self._lock:
             current = self._current_job
         if isinstance(current, EMSJob):
             return {"status": "already moswin", "source": "moswin"}
-        if isinstance(current, NOAAJob):
-            return {"error": "NOAA pass in progress; try again after it ends"}
         self._queue.remove_by_name("monitor")
         self._queue.remove_by_name("ems_scanner")
         with self._lock:
@@ -943,7 +880,6 @@ class Scheduler:
             "queue": [{"name": j.name, "priority": j.priority, "detail": j.status_detail()}
                       for j in queue_jobs],
             "recent": list(self._activity)[:20],
-            "upcoming_passes": self._upcoming_passes[:5],
         }
 
     def recent_calls(self, limit: int = 50) -> list[dict]:
@@ -1073,10 +1009,6 @@ def create_api(scheduler: Scheduler) -> Flask:
     @api.route("/manual_recordings")
     def manual_recordings():
         return jsonify(scheduler.recent_manual())
-
-    @api.route("/passes")
-    def passes():
-        return jsonify(scheduler._upcoming_passes)
 
     # ----- Recording -----
     @api.route("/recording/start", methods=["POST"])

@@ -9,16 +9,14 @@ hardware-wise — a Pi can host 4+ USB SDRs — but creates real cost ($30/dongl
 and operational complexity (USB power budgeting, identifying which dongle is
 which, multiple antenna runs).
 
-The frequencies we care about all live in 130-170 MHz, which means **one
-antenna serves them all**. Combined with the fact that most jobs are
-either bursty (NOAA passes) or polling-friendly (AIS, ACARS), time-slicing
+Most jobs are either bursty or polling-friendly (AIS, ACARS), so time-slicing
 one SDR is the right design.
 
 The exception is EMS — that one wants 24/7 receive time. But the data is
 intermittent (most talkgroups are idle most of the time), so missing a few
-minutes during a NOAA pass is acceptable. The EMS scanner logs everything
-locally to disk, so the missed window is gap, not loss; the scanner picks
-back up where it left off.
+minutes during a manual override or a poll is acceptable. The EMS scanner logs
+everything locally to disk, so the missed window is gap, not loss; the scanner
+picks back up where it left off.
 
 ## Why a Python scheduler instead of systemd timers
 
@@ -29,13 +27,13 @@ Two reasons:
 
 1. **Priority queue with preemption.** systemd doesn't natively model "this
    job is more important than that one." `Conflicts=` only handles pairs;
-   adding a fifth job means N² edge cases. A single Python process with a
+   adding more jobs means N² edge cases. A single Python process with a
    priority queue handles arbitrary preemption with no special cases.
 
-2. **State preservation across preemptions.** When EMS scanner is preempted
-   by a NOAA pass, we want to: (a) log what we were doing, (b) save audio
+2. **State preservation across preemptions.** When the EMS scanner is preempted
+   by a manual override, we want to: (a) log what we were doing, (b) save audio
    buffer to disk so the call doesn't vanish mid-recording, (c) restart
-   exactly where we left off after the pass. systemd can't model that;
+   exactly where we left off afterward. systemd can't model that;
    a process holding state can.
 
 ## Why HTTP-on-localhost between UI and scheduler
@@ -84,7 +82,6 @@ class Job(ABC):
 
 Priorities:
 - 10 — manual override from UI
-- 5 — NOAA pass
 - 3 — AIS poll
 - 2 — ACARS poll
 - 1 — EMS scanner (default filler)
@@ -101,7 +98,7 @@ etc.) but cannot acquire the underlying device themselves. This prevents
 two jobs from racing for the dongle.
 
 If a job needs to spawn a subprocess that touches the SDR (e.g., `rtl_ais`
-or `noaa-apt` as external tools), the scheduler hands off the device by
+or `SDRTrunk` as external tools), the scheduler hands off the device by
 releasing its handle, the subprocess does its thing, then the scheduler
 reacquires when the subprocess exits. The scheduler ensures only one
 subprocess is alive at a time.
@@ -124,12 +121,6 @@ These are speculative; document them so they don't get lost.
 simultaneously, both see the same status (good, that's what we want).
 Manual overrides should be first-come-first-served and visible to all
 viewers ("override active from user X, ends at HH:MM").
-
-**Long-running NOAA imagery archive.** Storage planning: each NOAA pass
-generates ~30 MB of WAV + a 2 MB PNG. 6 passes/day × 365 days = ~80 GB/year
-of WAV (delete after decode), ~5 GB/year of PNGs (keep). Pi's SD card or
-attached storage needs to handle this if we keep WAVs around for re-decoding
-with improved algorithms.
 
 **Geographic AIS coverage.** With a good wideband antenna in the attic,
 expect ~20-40 km range for AIS. That's a section of the Mississippi River

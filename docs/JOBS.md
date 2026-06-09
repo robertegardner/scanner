@@ -52,53 +52,13 @@ should:
 
 The "we missed N minutes of EMS" gap should be visible in the UI.
 
-## NOAA APT (priority 5, scheduled per pass)
+## NOAA APT — removed 2026-06-08
 
-**Satellites:**
-
-| Satellite | Frequency | Status |
-|---|---|---|
-| NOAA-15 | 137.620 MHz | Operational, beyond design life |
-| NOAA-18 | 137.9125 MHz | Operational, beyond design life |
-| NOAA-19 | 137.100 MHz | Operational, beyond design life |
-
-All three transmit APT continuously when in sunlight. ~6 combined passes
-per day visible from Cape Girardeau, each 10-15 minutes.
-
-**Software:**
-- `pyorbital` for orbital ephemeris and pass prediction (Python)
-- `noaa-apt` for image decoding from WAV (Rust binary, fast, well-maintained)
-
-**TLE source:** Celestrak (https://celestrak.org/NORAD/elements/) maintains
-current TLE data for all polar weather satellites. Update daily via cron.
-
-**Pass criteria:** only capture passes with maximum elevation > 20°. Below
-that, the signal is too weak through atmospheric attenuation to be useful.
-
-**Pipeline:**
-
-1. Predictor predicts next pass at startup + every 6 hours
-2. ~5 min before AOS (acquisition of signal), inject a job into the queue
-   with `priority=5`, `duration_s=(LOS-AOS)+30`
-3. Job starts at AOS:
-   - Tune dongle to satellite's frequency
-   - Record at 48 kHz (APT signal is centered ~2.4 kHz, doesn't need much)
-   - Save WAV to `/var/lib/scanner/noaa/raw/`
-4. At LOS, job stops recording
-5. Decode WAV to PNG with `noaa-apt`
-6. Save PNG to `/var/lib/scanner/noaa/images/YYYY-MM-DD/`
-7. Delete the WAV after successful decode (or keep last 7 days for re-decode)
-
-**Output format:** standard NOAA APT image — two side-by-side channels
-(typically visible and IR), about 2080 × N pixels where N depends on pass
-duration. False-color rendering (cloud-and-land map style) is a Stage 8
-nice-to-have.
-
-**Caveats:**
-- All three satellites are well past their design life. Could be
-  decommissioned with little notice.
-- If multiple satellites are overhead simultaneously, we can only capture
-  one — pick the one with higher max elevation.
+NOAA APT weather-satellite imagery was removed from this project. The aging
+NOAA-15/18/19 birds are end-of-life and, more fundamentally, the discone
+physically can't hear a 137 MHz LEO satellite (zenith null + vertical-vs-RHCP
+polarization mismatch). Weather-sat imagery moved to the sibling **radio**
+project, which decodes **Meteor LRPT** on a V-dipole on the SDRplay RSPdx-R2.
 
 ## AIS poll (priority 3, scheduled)
 

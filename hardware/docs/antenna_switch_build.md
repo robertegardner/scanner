@@ -4,6 +4,14 @@ Scanner project (`robertegardner/scanner`). Selects one of several antennas onto
 the single Nooelec NESDR SMArt v5 input under software control, so the scheduler
 can pick the right antenna per job.
 
+> **2026-06-08 — NOAA APT removed.** Part of this doc's original rationale was a
+> dedicated 137 MHz RHCP (QFH/V-dipole) antenna for NOAA APT. NOAA APT has been
+> removed from the project (the discone can't hear a 137 MHz LEO sat; weather-sat
+> imagery moved to the sibling radio project as Meteor LRPT). So the switch is no
+> longer needed to feed a sat antenna — the only live driver left is routing the
+> **discone** for 700 MHz P25 and the **dipole** for the 131–162 MHz VHF cluster
+> (AIS/ACARS). The 137 MHz/QFH references below are stale; treat them as removed.
+
 > **Why this exists (and why it didn't for the radio project).** The radio
 > project's RSPdx-R2 has three antenna inputs, so antenna selection there is a
 > software API call and the old GPIO relay design was scrapped. The scanner's
@@ -17,7 +25,6 @@ single antenna serves both well**:
 | Job | Frequency | Best antenna | Why |
 |-----|-----------|--------------|-----|
 | EMS scanner — MOSWIN P25 (**default job**) | **769–771 MHz** | **Discone** | The VHF dipole physically can't receive 700 MHz at all |
-| NOAA APT | 137 MHz | **Dipole** (ideally a 137 MHz V-dipole/QFH) | Discone has low gain + wrong polarization for satellites |
 | AIS | 162 MHz | Dipole | Better VHF gain than the discone |
 | ACARS | 131 MHz | Dipole | Same |
 
@@ -32,10 +39,8 @@ inputs are *necessary*, not a nice-to-have.
 
 - **2 inputs** covers the two real, non-overlapping needs today.
 - **A 3rd reserved input** is cheap insurance against one realistic upgrade
-  without another attic trip: a polarization-matched NOAA antenna (a 137 MHz
-  V-dipole or QFH meaningfully beats both a vertical dipole and the discone for
-  satellite imagery), *or* a tuned 700 MHz gain antenna (collinear/yagi) to lift
-  P25 decode margin above the wideband discone.
+  without another attic trip: a tuned 700 MHz gain antenna (collinear/yagi) to
+  lift P25 decode margin above the wideband discone.
 - **Stop at 3 in a relay tree.** Every relay in the signal path adds insertion
   loss, and that bites hardest at 769 MHz. A 4th antenna means a 3-deep path
   (~3–6 dB at UHF), which can erase the very gain a tuned UHF antenna was meant
@@ -338,7 +343,6 @@ def set_for_freq(hz: int) -> str:
 
 JOB_ANTENNA = {
     "ems_scanner": DISCONE,   # MOSWIN P25 @ 769 MHz
-    "noaa_apt":    DIPOLE,    # 137 MHz (switch to AUX if you add a sat antenna)
     "ais_poll":    DIPOLE,    # 162 MHz
     "acars_poll":  DIPOLE,    # 131 MHz
 }
@@ -564,11 +568,6 @@ you used RG174/RG58 internally. Swap to a DC-3 GHz coaxial relay and RG316.
 
 **Random clicking at boot.** A pull-down is missing/open. Both ULN2003 inputs
 need ~10 kΩ to GND so relays stay off (discone) before software runs.
-
-**Everything bench-tests fine but NOAA images are still noisy in the attic.** That's
-the antenna/polarization, not the switch — a vertical dipole is a poor match for
-RHCP satellites. This is exactly what reserved input ANT3 is for: a 137 MHz
-V-dipole or QFH, then change `JOB_ANTENNA["noaa_apt"]` to `AUX`.
 
 ---
 
