@@ -19,7 +19,33 @@ This project shares hardware with the FM/AM broadcast radio project at
 the same Pi but are independent codebases. The radio uses an SDRplay RSPdx-R2;
 this project uses the spare Nooelec on a separate USB port.
 
-## Status
+## V2 (scanner-compute era) — START HERE as of 2026-06-10
+
+P25 decoding moved OFF the Pi to the `scanner-compute` LXC (192.168.6.83):
+op25 (boatbod) decodes MOSWIN from the RTL2838 served over SoapyRemote, audio
+publishes to the rack Icecast `/ems.mp3`. The platform repo
+(`../platform`, see its CLAUDE.md) owns ALL the infrastructure (container,
+op25 build/units/config, registry); THIS repo owns scanner app code.
+
+- **`v2/scanner_api.py`** — V1-contract REST bridge on .83:8081 feeding the
+  Android app (`~/radio-android`): live talkgroup status from op25's http
+  terminal, call EVENTS (no recordings yet), graceful stubs for
+  monitor/squelch until the Airspy R2. Deploy: **`v2/deploy.sh`** (ships via
+  the thebeast SSH jump + restarts `scanner-api`; the unit/env are
+  platform-provisioned — change them in ../platform).
+- **The V1 stack below still exists on the Pi** but is RETIRED from live
+  duty: `SCHEDULER_EMS_DEFAULT=false`, SDRTrunk off, the dongle is owned by
+  `sdr-source@rtl-2838` 24/7. **NEVER start the V1 EMS/monitor jobs or
+  re-enable autopilot** — the scheduler's dongle handling (usbreset) yanks
+  the RTL out from under the source server and wedges rack op25. The Pi UI
+  (:8081) remains useful as the read-only legacy call/recordings archive.
+- V2 roadmap: edge-record `/ems.mp3` on tgid boundaries (tappable calls in
+  the app), then full scanner v2 on Airspy R2 arrival (multi_rx, category
+  mounts, aviation monitor + squelch, transcripts).
+
+---
+
+## Status (V1 — historical; superseded above)
 
 **Stages 0–5 complete and running on the Pi.** As of 2026-05-27 the system is
 in daily use for VHF aviation AM listening on the discone; EMS scanning works
