@@ -15,6 +15,17 @@ from flask import Flask, abort, jsonify, render_template, request, send_file
 app = Flask(__name__)
 
 SCHEDULER_URL = f"http://127.0.0.1:{os.environ.get('SCHEDULER_PORT', '8082')}"
+
+# V2-interim read-only mode (SCANNER_UI_READONLY=true): proxy every scheduler
+# call to the scanner-api bridge on scanner-compute instead of the local
+# scheduler. The bridge is safe by construction — it has no dongle access, so
+# the UI physically cannot trigger the V1 jobs whose usbreset would yank the
+# RTL2838 out from under the platform's sdr-source server. Listening +
+# captions + live op25 status keep working; tune/record/source actions get
+# clean bridge errors (aviation returns with the Airspy R2).
+READONLY = os.environ.get("SCANNER_UI_READONLY", "").lower() in ("1", "true", "yes", "on")
+if READONLY:
+    SCHEDULER_URL = os.environ.get("SCANNER_API_URL", "http://192.168.6.83:8081") + "/api"
 EMS_RECORDINGS_DIR = Path(os.environ.get("EMS_RECORDINGS_DIR", "/var/lib/scanner/ems/recordings"))
 MANUAL_RECORDINGS_DIR = Path(os.environ.get("MANUAL_RECORDINGS_DIR", "/var/lib/scanner/manual"))
 RECORDINGS_DIR = Path(os.environ.get("RECORDINGS_DIR", "/var/lib/scanner/recordings"))
@@ -128,12 +139,18 @@ def listen_page():
     """Source switcher: listen to any Nooelec tunable (MOSWIN P25 default,
     aviation AM on demand) — all on the one shared SDR via the scheduler."""
     status = _sched("/status")
+    # V2 interim: the category sub-mounts (/ems-*.mp3) are dark — only the
+    # full op25 feed exists. Offer just "All" so the pills don't dead-end.
+    cats = _moswin_categories()
+    if READONLY:
+        cats = cats[:1]
     return render_template(
         "listen.html",
         status=status,
         moswin_stream_url=ICECAST_STREAM_URL,
         monitor_stream_url=MONITOR_STREAM_URL,
-        categories=_moswin_categories(),
+        categories=cats,
+        readonly=READONLY,
     )
 
 

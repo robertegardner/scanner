@@ -147,6 +147,15 @@
     <a href="/recordings">Recordings</a>
   </nav>
 </header>
+{% if readonly %}
+<!-- V2 interim: aviation tuning needs the dongle op25 owns; the bridge can't
+     tune. Hide the aviation surfaces (listeners still wire to the hidden
+     elements, so the JS stays untouched) and show a small mode note. -->
+<style>#src-aviation, #panel-aviation, #tune-modal { display:none !important; }
+  .romode { text-align:center; font-size:0.7rem; letter-spacing:0.08em;
+            text-transform:uppercase; color:#64748b; margin:-4px 0 8px; }</style>
+<div class="romode">read-only · live op25 feed · aviation returns with the Airspy R2</div>
+{% endif %}
 
 <div class="wrap">
 <div class="tuner">

@@ -21,7 +21,9 @@ the live overlay. Everything degrades gracefully when the Whisper host is
 unreachable (the common case — it's a sometimes-on GPU box): we back off and
 retry, nothing crashes.
 """
+import array
 import json
+import math
 import os
 import re
 import subprocess
@@ -229,6 +231,24 @@ def sched_status() -> dict:
         return {}
 
 
+# V2 interim (TRANSCRIBE_ALWAYS=true): caption MONITOR_LOCAL_URL continuously
+# instead of gating on the (now idle) scheduler's monitor job — used to caption
+# the rack op25 /ems.mp3 feed. The RMS gate skips the liquidsoap silence
+# padding between calls so Whisper doesn't transcribe (or hallucinate on) dead
+# air around the clock.
+TRANSCRIBE_ALWAYS = os.environ.get("TRANSCRIBE_ALWAYS", "").lower() in ("1", "true", "yes", "on")
+ALWAYS_CONTEXT = os.environ.get("TRANSCRIBE_CONTEXT", "MOSWIN P25")
+RMS_GATE = int(os.environ.get("TRANSCRIBE_RMS_GATE", "250"))
+
+
+def _window_rms(pcm: bytes) -> float:
+    a = array.array("h")
+    a.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    if not a:
+        return 0.0
+    return math.sqrt(sum(x * x for x in a) / len(a))
+
+
 def monitor_caption_loop() -> None:
     proc = None
     buf = bytearray()
@@ -244,14 +264,17 @@ def monitor_caption_loop() -> None:
         buf = bytearray()
 
     while True:
-        status = sched_status()
-        current = status.get("current") if isinstance(status, dict) else None
-        active = bool(current) and current.get("name") == "monitor"
-        if not active:
-            stop()
-            time.sleep(STATUS_POLL_SEC)
-            continue
-        context = current.get("detail") or "monitor"
+        if TRANSCRIBE_ALWAYS:
+            context = ALWAYS_CONTEXT
+        else:
+            status = sched_status()
+            current = status.get("current") if isinstance(status, dict) else None
+            active = bool(current) and current.get("name") == "monitor"
+            if not active:
+                stop()
+                time.sleep(STATUS_POLL_SEC)
+                continue
+            context = current.get("detail") or "monitor"
         if proc is None:
             proc = subprocess.Popen(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error",
@@ -268,6 +291,8 @@ def monitor_caption_loop() -> None:
         if len(buf) < window_bytes:
             continue
         pcm, buf = bytes(buf), bytearray()
+        if _window_rms(pcm) < RMS_GATE:   # silence padding between calls
+            continue
         if _whisper_down():
             continue
         text = transcribe_pcm(pcm)
