@@ -232,7 +232,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlparse(self.path)
-        if url.path == "/api/status":
+        if url.path == "/":
+            self._send(200, {
+                "service": "scanner-api (V2 bridge)",
+                "endpoints": ["/api/status", "/api/calls?limit=N",
+                              "/api/source/moswin", "/api/monitor/squelch"],
+                "audio": "https://icecast.rg2.io/ems.mp3",
+                "console": "https://scanner.rg2.io/",
+            })
+        elif url.path == "/api/status":
             self._send(200, status_payload())
         elif url.path == "/api/calls":
             q = parse_qs(url.query)
