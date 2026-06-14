@@ -58,6 +58,69 @@ COMPACT_BYTES   = 1_000_000
 
 _CLIENT_UUID = str(uuid.uuid4())
 
+# Minimal human UI served at "/" (ems.rg2.io): live EMS caption + recent
+# transcript log, polling the same-origin /api/transcribe + /api/transcript
+# endpoints. Stdlib-only, no templates — a plain literal (braces are CSS/JS, so
+# this must NOT be an f-string/.format target).
+CAPTIONS_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EMS Captions - MOSWIN P25</title>
+<style>
+:root{--bg:#0d0e10;--panel:#16181c;--line:#2a2e35;--text:#e6e8eb;--dim:#8b929c;--accent:#6db0f0;--green:#6df09b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,sans-serif}
+header{padding:.7rem 1rem;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+h1{font-size:1rem;margin:0;font-weight:600}
+.sub{color:var(--dim);font-size:.8rem}
+audio{height:34px}
+main{max-width:780px;margin:0 auto;padding:1rem}
+.live{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem;margin-bottom:1rem}
+.live .ctx{color:var(--accent);font-size:.72rem;text-transform:uppercase;letter-spacing:.05em}
+.live .txt{font-size:1.5rem;line-height:1.35;margin-top:.35rem;min-height:1.4em}
+.live .age{color:var(--dim);font-size:.75rem;margin-top:.45rem}
+.live.stale .txt{color:var(--dim)}
+.log{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.log h2{font-size:.74rem;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin:0;padding:.55rem 1rem;border-bottom:1px solid var(--line)}
+.row{padding:.5rem 1rem;border-bottom:1px solid var(--line);display:flex;gap:.75rem}
+.row:last-child{border-bottom:0}
+.row time{color:var(--dim);font-variant-numeric:tabular-nums;font-size:.8rem;white-space:nowrap;padding-top:.12rem}
+.empty{color:var(--dim);padding:1rem;text-align:center}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--dim);display:inline-block;transition:background .3s}
+.dot.on{background:var(--green)}
+</style></head><body>
+<header>
+<span class="dot" id="dot"></span>
+<h1>EMS Captions</h1><span class="sub">MOSWIN P25 &middot; live transcription</span>
+<span style="flex:1"></span>
+<audio controls preload="none" src="https://icecast.rg2.io/ems.mp3"></audio>
+</header>
+<main>
+<div class="live" id="live"><div class="ctx" id="ctx">MOSWIN P25</div>
+<div class="txt" id="txt">&hellip;</div><div class="age" id="age"></div></div>
+<div class="log"><h2>Recent</h2><div id="rows"><div class="empty">Loading&hellip;</div></div></div>
+</main>
+<script>
+var $=function(i){return document.getElementById(i)};
+function ago(s){if(!s)return'';var d=Math.max(0,Date.now()/1000-s);
+ if(d<60)return Math.round(d)+'s ago';if(d<3600)return Math.round(d/60)+'m ago';return Math.round(d/3600)+'h ago';}
+function esc(s){return String(s).replace(/[&<>]/g,function(m){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[m]});}
+function poll(){fetch('/api/transcribe',{cache:'no-store'}).then(function(r){return r.json()}).then(function(c){
+ $('txt').textContent=c.text||'(silence)';$('ctx').textContent=c.context||'MOSWIN P25';
+ var fresh=c.updated&&(Date.now()/1000-c.updated)<90;
+ $('live').classList.toggle('stale',!fresh);$('dot').classList.toggle('on',!!fresh);
+ $('age').textContent=c.updated?('updated '+ago(c.updated)):'';
+}).catch(function(){$('dot').classList.remove('on')});}
+function loadLog(){fetch('/api/transcript?limit=60',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+ var rows=(d.entries||[]).filter(function(e){return e.text});
+ $('rows').innerHTML=rows.length?rows.map(function(e){var t=(e.ts||'').slice(11,19);
+  return '<div class="row"><time>'+t+'</time><span>'+esc(e.text)+'</span></div>';}).join(''):
+  '<div class="empty">No captions yet today.</div>';
+}).catch(function(){});}
+poll();loadLog();setInterval(poll,3000);setInterval(loadLog,12000);
+</script></body></html>
+"""
+
 
 def log(msg: str) -> None:
     print(msg, flush=True)
@@ -301,12 +364,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_html(self, code: int, html: str):
+        data = html.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def log_message(self, fmt, *args):  # journal noise control
         pass
 
     def do_GET(self):
         url = urlparse(self.path)
         if url.path == "/":
+            self._send_html(200, CAPTIONS_HTML)
+        elif url.path == "/api":
             self._send(200, {
                 "service": "scanner-api (V2 bridge)",
                 "endpoints": ["/api/status", "/api/calls?limit=N",
@@ -314,6 +387,7 @@ class Handler(BaseHTTPRequestHandler):
                               "/api/source/moswin", "/api/monitor/squelch"],
                 "audio": "https://icecast.rg2.io/ems.mp3",
                 "console": "https://scanner.rg2.io/",
+                "ui": "/",
             })
         elif url.path == "/api/status":
             self._send(200, status_payload())
