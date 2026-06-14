@@ -7,6 +7,10 @@ fed by op25's http terminal. Stdlib only — no Flask, no requests.
   GET  /api/status            {"current": {...}|null, "sdr_owner", "upcoming_passes": []}
   GET  /api/calls?limit=N     bare list of call EVENTS (no recordings yet — all
                               file fields null; the app renders rows, taps no-op)
+  GET  /api/transcribe        latest live caption {text,source,context,updated}
+                              from scanner-transcribe's tmpfs state file
+  GET  /api/transcript?date=&limit=N   {date, days[], entries[]} from the EMS
+                              transcript JSONL log (monitor-mode captions)
   POST /api/source/moswin     no-op success (op25 IS permanently MOSWIN)
   POST /api/monitor/tune      400 — aviation monitor returns with the Airspy R2
   GET  /api/monitor/squelch   static {"enabled": false, "active_on_monitor": false}
@@ -23,8 +27,10 @@ Config via environment (systemd EnvironmentFile=/etc/scanner-compute/scanner-api
   TGID_TAGS          default /opt/scanner-compute/moswin-tgid-tags.tsv
   EVENTS_PATH        default /var/lib/scanner-compute/call-events.jsonl
 """
+import glob
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -38,6 +44,11 @@ OP25_URL    = os.environ.get("OP25_TERMINAL_URL", "http://127.0.0.1:8080")
 API_PORT    = int(os.environ.get("API_PORT", "8081"))
 TGID_TAGS   = os.environ.get("TGID_TAGS", "/opt/scanner-compute/moswin-tgid-tags.tsv")
 EVENTS_PATH = os.environ.get("EVENTS_PATH", "/var/lib/scanner-compute/call-events.jsonl")
+# EMS transcription output (written by scanner-transcribe on this host). Defaults
+# match its transcribe.env so the bridge surfaces captions with no extra config.
+TRANSCRIPTS_DIR       = os.environ.get("TRANSCRIPTS_DIR", "/var/lib/scanner-compute/transcripts")
+TRANSCRIBE_STATE_PATH = os.environ.get("TRANSCRIBE_STATE_PATH", "/run/scanner/transcribe.json")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 POLL_S          = 1.0    # op25 terminal poll cadence
 STALE_S         = 30.0   # no trunk_update for this long -> report current: null
@@ -50,6 +61,14 @@ _CLIENT_UUID = str(uuid.uuid4())
 
 def log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def _int(val, default: int) -> int:
+    """Parse a query-string int, falling back to default on junk (no 500s)."""
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
 
 
 def load_tags(path: str) -> dict:
@@ -216,6 +235,61 @@ def calls_payload(limit: int) -> list:
     return list(reversed(out))[:max(1, limit)]
 
 
+# -- EMS transcripts (produced by scanner-transcribe on this host) -------------
+# op25 has no per-call recordings, so transcription is monitor-mode (rolling
+# captions of the live /ems.mp3). That output is stream-level, not call-keyed —
+# hence it surfaces here, not in the per-call `transcript` field (which stays
+# null). Shapes match the V1 scanner-ui contract exactly so existing clients work.
+
+def live_caption() -> dict:
+    """Latest live caption written to tmpfs by scanner-transcribe."""
+    try:
+        with open(TRANSCRIBE_STATE_PATH, encoding="utf-8") as f:
+            return json.loads(f.read())
+    except (OSError, ValueError):
+        return {"text": "", "source": "", "context": "", "updated": 0}
+
+
+def transcript_days() -> list:
+    """Dates (newest first) that have a transcript log."""
+    try:
+        days = [os.path.basename(p)[:-6]  # strip ".jsonl"
+                for p in glob.glob(os.path.join(TRANSCRIPTS_DIR, "*.jsonl"))]
+    except OSError:
+        days = []
+    return sorted((d for d in days if _DATE_RE.match(d)), reverse=True)
+
+
+def read_transcript_day(date: str, limit: int = 1000) -> list:
+    """Parse one day's JSONL transcript log, newest first."""
+    if not _DATE_RE.match(date or ""):
+        return []
+    path = os.path.join(TRANSCRIPTS_DIR, f"{date}.jsonl")
+    entries = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        return []
+    entries.reverse()
+    return entries[:max(1, limit)]
+
+
+def transcript_payload(date: str, limit: int) -> dict:
+    days = transcript_days()
+    if not date:
+        date = days[0] if days else ""
+    return {"date": date, "days": days,
+            "entries": read_transcript_day(date, limit) if date else []}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "scanner-api/1.0"
 
@@ -236,6 +310,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {
                 "service": "scanner-api (V2 bridge)",
                 "endpoints": ["/api/status", "/api/calls?limit=N",
+                              "/api/transcribe", "/api/transcript?date=&limit=N",
                               "/api/source/moswin", "/api/monitor/squelch"],
                 "audio": "https://icecast.rg2.io/ems.mp3",
                 "console": "https://scanner.rg2.io/",
@@ -244,8 +319,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, status_payload())
         elif url.path == "/api/calls":
             q = parse_qs(url.query)
-            limit = int(q.get("limit", ["15"])[0] or 15)
+            limit = _int(q.get("limit", ["15"])[0], 15)
             self._send(200, calls_payload(limit))
+        elif url.path == "/api/transcribe":
+            self._send(200, live_caption())
+        elif url.path == "/api/transcript":
+            q = parse_qs(url.query)
+            date = q.get("date", [""])[0]
+            limit = _int(q.get("limit", ["1000"])[0], 1000)
+            self._send(200, transcript_payload(date, limit))
         elif url.path == "/api/monitor/squelch":
             self._send(200, {"enabled": False, "active_on_monitor": False})
         elif url.path.startswith("/recordings/"):
