@@ -59,51 +59,89 @@ COMPACT_BYTES   = 1_000_000
 
 _CLIENT_UUID = str(uuid.uuid4())
 
-# ---- ATC airband (on-demand; preempts P25) -------------------------------
-# A click starts atc-listen@<freq>.service on this host, which stops op25 + the
-# rtl_tcp bridge to free the Airspy R2, AM-demods the airband channel to the rack
-# Icecast /scanner-atc.mp3, and auto-returns to P25 after 10 min (RuntimeMaxSec)
-# or on stop. systemctl start/stop is sudo-granted to this user (scanner-atc
-# sudoers drop-in).
-ATC_PRESETS = [
-    {"label": "AWOS 120.55", "freq": 120550000},
-    {"label": "Tower 119.0", "freq": 119000000},
-    {"label": "Approach 133.65", "freq": 133650000},
-    {"label": "Ground 121.6", "freq": 121600000},
+# ---- on-demand FM/AM monitor (the V1 tuner; preempts P25) -----------------
+# /api/monitor/tune writes /var/lib/scanner-compute/monitor.env and restarts
+# monitor.service, which stops op25 + the rtl_tcp bridge to free the R2,
+# NFM/AM-demods (monitor_stream.py) to /scanner-atc.mp3, and auto-returns to P25
+# after RuntimeMaxSec or on stop. systemctl is sudo-granted (scanner-monitor).
+MONITOR_ENV = "/var/lib/scanner-compute/monitor.env"
+MON_PRESETS = [
+    {"label": "NOAA WX",        "freq": 162550000, "mode": "nfm"},
+    {"label": "Marine 16",      "freq": 156800000, "mode": "nfm"},
+    {"label": "CCPA EMS",       "freq": 155205000, "mode": "nfm"},
+    {"label": "KCGI Tower",     "freq": 125525000, "mode": "am"},
+    {"label": "Memphis Center", "freq": 133650000, "mode": "am"},
 ]
-ATC_MOUNT = "https://icecast.rg2.io/scanner-atc.mp3"
-ATC_MIN_HZ, ATC_MAX_HZ = 118_000_000, 137_000_000   # airband voice
+MON_MOUNT = "https://icecast.rg2.io/scanner-atc.mp3"
+MON_MIN_HZ, MON_MAX_HZ = 24_000_000, 1_700_000_000   # Airspy R2 tuning range
 
 
-def atc_active_freq():
-    """The freq (Hz) of the running atc-listen@ instance, or None."""
+def parse_freq(val):
+    """'162.550M' / '125525000' / 125.525 -> Hz float. Bare number = MHz."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().lower()
+    mult = 1.0
+    if s and s[-1] in "mkg":
+        mult = {"m": 1e6, "k": 1e3, "g": 1e9}[s[-1]]
+        s = s[:-1]
+    v = float(s) * mult
+    return v if v > 1e6 else v * 1e6
+
+
+def monitor_active():
     try:
-        out = subprocess.run(
-            ["systemctl", "list-units", "--type=service", "--state=active",
-             "--no-legend", "--plain", "atc-listen@*"],
-            capture_output=True, text=True, timeout=5).stdout
-        m = re.search(r"atc-listen@(\d+)\.service", out)
-        return int(m.group(1)) if m else None
+        return subprocess.run(["systemctl", "is-active", "monitor.service"],
+                              capture_output=True, text=True, timeout=5).stdout.strip() == "active"
     except Exception:  # noqa: BLE001
-        return None
+        return False
 
 
-def atc_set(freq):
-    """Start ATC on freq (preempts P25); freq=None stops it. -> (ok, message)."""
-    cur = atc_active_freq()
-    if freq is None:
-        if cur is not None:
-            subprocess.run(["sudo", "systemctl", "stop", f"atc-listen@{cur}"], timeout=25)
-        return True, "stopped"
-    if not (ATC_MIN_HZ <= freq <= ATC_MAX_HZ):
-        return False, "frequency out of airband (118-137 MHz)"
-    if cur is not None and cur != freq:
-        subprocess.run(["sudo", "systemctl", "stop", f"atc-listen@{cur}"], timeout=25)
-    r = subprocess.run(["sudo", "systemctl", "start", f"atc-listen@{freq}"],
-                       capture_output=True, text=True, timeout=25)
-    if r.returncode != 0:
-        return False, (r.stderr or "start failed").strip()
-    return True, "started"
+def monitor_state():
+    st = {"active": monitor_active(), "freq": None, "mode": None,
+          "mount": MON_MOUNT, "presets": MON_PRESETS}
+    if st["active"]:
+        try:
+            env = {}
+            for line in open(MONITOR_ENV):
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.strip().split("=", 1)
+                    env[k] = v
+            st["freq"] = int(float(env.get("MON_FREQ", "0"))) or None
+            st["mode"] = env.get("MON_MODE")
+        except Exception:  # noqa: BLE001
+            pass
+    return st
+
+
+def monitor_tune(freq, mode, squelch):
+    """Write monitor.env + (re)start monitor.service. -> (ok, message)."""
+    if not (MON_MIN_HZ <= freq <= MON_MAX_HZ):
+        return False, "frequency out of range"
+    mode = {"fm": "nfm", "nfm": "nfm", "am": "am"}.get(mode, "")
+    if not mode:
+        return False, "mode must be nfm or am"
+    gains = "LNA:13,MIX:12,VGA:13" if mode == "nfm" else "LNA:14,MIX:13,VGA:14"
+    sq = round(max(0.0, squelch) / 150.0 * 0.03, 4) if squelch else 0.0
+    try:
+        with open(MONITOR_ENV, "w") as f:
+            f.write(f"MON_FREQ={int(freq)}\nMON_MODE={mode}\n"
+                    f"MON_GAINS={gains}\nMON_SQUELCH={sq}\n")
+        r = subprocess.run(["sudo", "systemctl", "restart", "monitor.service"],
+                           capture_output=True, text=True, timeout=25)
+        if r.returncode != 0:
+            return False, (r.stderr or "start failed").strip()
+        return True, "tuned"
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)
+
+
+def monitor_stop():
+    try:
+        subprocess.run(["sudo", "systemctl", "stop", "monitor.service"], timeout=25)
+    except Exception:  # noqa: BLE001
+        pass
+    return True, "stopped"
 
 # Minimal human UI served at "/" (ems.rg2.io): live EMS caption + recent
 # transcript log, polling the same-origin /api/transcribe + /api/transcript
@@ -111,96 +149,188 @@ def atc_set(freq):
 # this must NOT be an f-string/.format target).
 CAPTIONS_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EMS Captions - MOSWIN P25</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Scanner Monitor</title>
 <style>
-:root{--bg:#0d0e10;--panel:#16181c;--line:#2a2e35;--text:#e6e8eb;--dim:#8b929c;--accent:#6db0f0;--green:#6df09b}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,sans-serif}
-header{padding:.7rem 1rem;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
-h1{font-size:1rem;margin:0;font-weight:600}
-.sub{color:var(--dim);font-size:.8rem}
-audio{height:34px}
-main{max-width:780px;margin:0 auto;padding:1rem}
-.live{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem;margin-bottom:1rem}
-.live .ctx{color:var(--accent);font-size:.72rem;text-transform:uppercase;letter-spacing:.05em}
-.live .txt{font-size:1.5rem;line-height:1.35;margin-top:.35rem;min-height:1.4em}
-.live .age{color:var(--dim);font-size:.75rem;margin-top:.45rem}
-.live.stale .txt{color:var(--dim)}
-.log{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.log h2{font-size:.74rem;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin:0;padding:.55rem 1rem;border-bottom:1px solid var(--line)}
-.row{padding:.5rem 1rem;border-bottom:1px solid var(--line);display:flex;gap:.75rem}
-.row:last-child{border-bottom:0}
-.row time{color:var(--dim);font-variant-numeric:tabular-nums;font-size:.8rem;white-space:nowrap;padding-top:.12rem}
-.empty{color:var(--dim);padding:1rem;text-align:center}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--dim);display:inline-block;transition:background .3s}
-.dot.on{background:var(--green)}
-.atc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.9rem 1.1rem;margin-bottom:1rem}
-.atch{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.6rem;flex-wrap:wrap}
-.atch b{font-weight:600}.atch .st{font-size:.8rem;color:var(--dim)}.atch .st.on{color:var(--green)}
-.btns{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.55rem}
-.btns button,.man button{background:#23262c;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:.42rem .7rem;font:inherit;font-size:.85rem;cursor:pointer}
-.btns button.act{background:var(--accent);color:#06121f;border-color:var(--accent);font-weight:600}
-.man{display:flex;gap:.4rem}
-.man input{flex:1;min-width:0;background:#0d0e10;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:.42rem .6rem;font:inherit}
-.man button.stop{background:#3a2326;border-color:#5a2e34}
+:root{--bg-deep:#0a0a0c;--bg-panel:#15161a;--bg-raise:#1f2126;--bg-button:#2a2d33;--bg-button-hover:#353941;--line:#2c2e34;--amber:#ffae3a;--amber-dim:#6b4818;--green:#6df09b;--red:#f06d6d;--text:#e6e6e6;--text-dim:#888;--text-faint:#555;--accent:#2563eb}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:radial-gradient(circle at 50% -20%,#1a1c22 0%,var(--bg-deep) 70%);color:var(--text);font-family:system-ui,-apple-system,sans-serif;min-height:100vh}
+header{background:#1a1d27;border-bottom:1px solid #2d3148;padding:12px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+header h1{font-size:1.1rem;font-weight:600;letter-spacing:.05em;color:#a5b4fc}
+nav a{font-size:.82rem;color:#94a3b8;text-decoration:none}
+nav a:hover{color:#e2e8f0}
+.wrap{display:flex;justify-content:center;align-items:flex-start;padding:1.6rem 1rem 3rem}
+.tuner{width:100%;max-width:540px;background:linear-gradient(180deg,#1a1c22 0%,var(--bg-panel) 100%);border:1px solid var(--line);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04);padding:1.25rem;display:flex;flex-direction:column;gap:1rem}
+.lcd{background:linear-gradient(180deg,#0d0e10 0%,#16181c 100%);border:1px solid #000;border-radius:10px;padding:1rem 1.25rem;box-shadow:inset 0 2px 8px rgba(0,0,0,.7);min-height:120px}
+.lcd-row{display:flex;justify-content:space-between;align-items:baseline}
+.lcd-band{color:var(--amber);font-family:'Courier New',monospace;font-size:.85rem;font-weight:700;letter-spacing:.12em;text-shadow:0 0 8px var(--amber)}
+.lcd-status{display:flex;gap:.65rem;align-items:center;font-size:.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.1em}
+.led{width:7px;height:7px;border-radius:50%;background:#333;transition:background .15s,box-shadow .15s;display:inline-block}
+.led.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+.led.amber{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.led.err{background:var(--red);box-shadow:0 0 8px var(--red)}
+.lcd-freq{color:var(--amber);font-family:'Courier New',monospace;font-weight:700;font-size:3.2rem;letter-spacing:.04em;line-height:1;margin:.45rem 0 .2rem;text-shadow:0 0 12px rgba(255,174,58,.6);font-variant-numeric:tabular-nums}
+.lcd-freq .unit{font-size:1rem;color:var(--amber-dim);margin-left:.35rem;letter-spacing:.15em;vertical-align:middle}
+.lcd-call{color:var(--text);font-size:1rem;font-weight:500;min-height:1.4em}
+.lcd-call .sub{color:var(--text-dim);font-weight:400;font-size:.82rem}
+.presets-label{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.15em;margin-bottom:.4rem;padding-left:.25rem}
+.presets{display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem}
+.preset{background:var(--bg-button);border:1px solid transparent;border-radius:8px;padding:.7rem .5rem;cursor:pointer;text-align:center;transition:all .12s}
+.preset:hover{background:var(--bg-button-hover)}
+.preset.active{border-color:var(--amber);background:#2c2520}
+.preset .plabel{display:block;font-size:.9rem;font-weight:600;color:var(--text)}
+.preset .pdesc{display:block;margin-top:.2rem;font-size:.7rem;color:var(--text-dim);font-family:'Courier New',monospace}
+.controls{display:flex;align-items:center;gap:.5rem;justify-content:space-between}
+.ctrl-left{display:flex;gap:.4rem}
+.ctrl-right{display:flex;align-items:center;gap:.5rem}
+.btn{background:var(--bg-button);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:.6rem .85rem;font-size:.85rem;font-weight:500;cursor:pointer;transition:all .12s;display:inline-flex;align-items:center;justify-content:center;gap:.35rem;min-width:44px;min-height:40px}
+.btn:hover:not(:disabled){background:var(--bg-button-hover)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent)}
+.btn.primary:hover:not(:disabled){filter:brightness(1.1)}
+.btn.danger{background:#3a2424;border-color:#5a3434;color:#f06d6d}
+.btn.danger:hover:not(:disabled){background:#4a2c2c}
+.vol-wrap{display:flex;align-items:center;gap:.4rem}
+.vol-icon{font-size:1rem;color:var(--text-dim)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:110px;height:6px;background:var(--bg-raise);border-radius:3px;outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;background:var(--amber);border-radius:50%;cursor:pointer;box-shadow:0 0 4px rgba(255,174,58,.5)}
+input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--amber);border-radius:50%;cursor:pointer;border:0}
+.sq-row{display:flex;align-items:center;gap:.6rem;padding:0 .25rem}
+.sq-label{font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.12em;min-width:1.6rem}
+.sq-val{font-size:.78rem;color:var(--amber);font-family:'Courier New',monospace;min-width:2.8rem}
+.sq-hint{font-size:.65rem;color:var(--text-faint);margin-left:auto}
+.status-bar{font-size:.75rem;color:var(--text-dim);min-height:1.2em;padding:0 .25rem}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:1rem;z-index:100}
+.modal-bg.show{display:flex}
+.modal{background:var(--bg-panel);border:1px solid var(--line);border-radius:14px;padding:1.1rem;width:100%;max-width:340px;display:flex;flex-direction:column;gap:.75rem}
+.modal h3{font-size:1rem;color:var(--text)}
+.modal label{font-size:.8rem;color:var(--text-dim);display:block;margin-bottom:.25rem}
+.modal select,.modal input[type=text]{width:100%;padding:.5rem .65rem;background:var(--bg-raise);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:.9rem;font-family:'Courier New',monospace;outline:none}
+.modal input:focus,.modal select:focus{border-color:var(--amber)}
+.modal-row{display:flex;gap:.5rem}
+.modal-row .btn{flex:1}
+.toast{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--bg-button);color:var(--text);padding:.6rem 1rem;border-radius:6px;border:1px solid var(--line);font-size:.85rem;opacity:0;transition:opacity .25s;pointer-events:none;z-index:200}
+.toast.show{opacity:1}
+.footer{text-align:center;font-size:.7rem;color:var(--text-faint)}
+.footer a{color:var(--text-dim);text-decoration:none}
+.note{font-size:.66rem;color:var(--text-faint);text-align:center;letter-spacing:.04em}
+@media (max-width:400px){.lcd-freq{font-size:2.4rem}input[type=range]{width:80px}}
 </style></head><body>
 <header>
-<span class="dot" id="dot"></span>
-<h1>EMS Captions</h1><span class="sub">MOSWIN P25 &middot; live transcription</span>
-<span style="flex:1"></span>
-<audio controls preload="none" src="https://icecast.rg2.io/ems.mp3"></audio>
+<h1>Scanner</h1>
+<nav><a href="https://scanner.rg2.io/">P25 console</a> &nbsp; <a href="https://p25.rg2.io/">archive</a> &nbsp; <a href="https://wx.rg2.io/">weather</a></nav>
 </header>
-<main>
-<div class="atc" id="atc">
-<div class="atch"><span><b>ATC</b> <span class="sub">airband &middot; preempts P25</span></span><span class="st" id="atcst">idle</span></div>
-<div class="btns" id="atcbtns"></div>
-<div class="man"><input id="atcf" placeholder="tune MHz, e.g. 124.2" inputmode="decimal"><button id="atcgo">Listen</button><button id="atcstop" class="stop">Stop</button></div>
-<audio id="atcaudio" controls preload="none" style="display:none;width:100%;margin-top:.6rem"></audio>
+<div class="wrap"><div class="tuner">
+<div class="lcd">
+<div class="lcd-row"><div class="lcd-band" id="band">P25</div>
+<div class="lcd-status"><span class="led" id="led"></span> <span id="ledtxt">MONITOR</span></div></div>
+<div class="lcd-freq" id="freq">---.---<span class="unit">MHz</span></div>
+<div class="lcd-call" id="call">MOSWIN P25 scanning &middot; pick a preset to monitor</div>
 </div>
-<div class="live" id="live"><div class="ctx" id="ctx">MOSWIN P25</div>
-<div class="txt" id="txt">&hellip;</div><div class="age" id="age"></div></div>
-<div class="log"><h2>Recent</h2><div id="rows"><div class="empty">Loading&hellip;</div></div></div>
-</main>
+<div><div class="presets-label">Presets &mdash; click to monitor (preempts P25)</div>
+<div class="presets" id="presets"></div></div>
+<div class="controls">
+<div class="ctrl-left"><button class="btn danger" id="stop" disabled>&#9632; Stop</button>
+<button class="btn" id="tune" title="Direct tune">&#9000; Tune</button></div>
+<div class="ctrl-right"><button class="btn primary" id="play">&#9654;</button>
+<div class="vol-wrap"><span class="vol-icon" id="volicon">&#128266;</span>
+<input type="range" id="vol" min="0" max="100" value="80"></div></div>
+</div>
+<div class="sq-row"><span class="sq-label">SQ</span>
+<input type="range" id="sq" min="0" max="150" value="0" style="width:120px">
+<span class="sq-val" id="sqval">OFF</span><span class="sq-hint">re-tune to apply</span></div>
+<div class="status-bar" id="status"></div>
+<div id="capbox" style="display:none;margin-top:4px;padding:10px 14px;background:#11151f;border:1px solid #2d3148;border-radius:8px;color:#cbd5e1;font-style:italic;line-height:1.4">
+<span id="caplabel" style="font-style:normal;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-right:8px">caption</span><span id="captext"></span></div>
+<div class="note">Monitoring preempts the P25 scanner and auto-returns after 30 min.</div>
+<div class="footer"><a href="/transcript">transcript log</a></div>
+</div></div>
+<audio id="audio" preload="none"></audio>
+<div class="modal-bg" id="tunemodal"><div class="modal"><h3>Direct Tune</h3>
+<div><label>Frequency (e.g. 162.550M or 125.525M)</label><input type="text" id="dtfreq" placeholder="162.550M" autocomplete="off"></div>
+<div><label>Mode</label><select id="dtmode"><option value="nfm">NFM (narrowband FM)</option><option value="am">AM (airband)</option></select></div>
+<div class="modal-row"><button class="btn primary" id="dtgo">Tune</button><button class="btn" id="dtcancel">Cancel</button></div>
+</div></div>
+<div class="toast" id="toast"></div>
 <script>
+'use strict';
 var $=function(i){return document.getElementById(i)};
-function ago(s){if(!s)return'';var d=Math.max(0,Date.now()/1000-s);
- if(d<60)return Math.round(d)+'s ago';if(d<3600)return Math.round(d/60)+'m ago';return Math.round(d/3600)+'h ago';}
-function esc(s){return String(s).replace(/[&<>]/g,function(m){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[m]});}
-function poll(){fetch('/api/transcribe',{cache:'no-store'}).then(function(r){return r.json()}).then(function(c){
- $('txt').textContent=c.text||'(silence)';$('ctx').textContent=c.context||'MOSWIN P25';
- var fresh=c.updated&&(Date.now()/1000-c.updated)<90;
- $('live').classList.toggle('stale',!fresh);$('dot').classList.toggle('on',!!fresh);
- $('age').textContent=c.updated?('updated '+ago(c.updated)):'';
-}).catch(function(){$('dot').classList.remove('on')});}
-function loadLog(){fetch('/api/transcript?limit=60',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
- var rows=(d.entries||[]).filter(function(e){return e.text});
- $('rows').innerHTML=rows.length?rows.map(function(e){var t=(e.ts||'').slice(11,19);
-  return '<div class="row"><time>'+t+'</time><span>'+esc(e.text)+'</span></div>';}).join(''):
-  '<div class="empty">No captions yet today.</div>';
-}).catch(function(){});}
-var atcPresets=[];
-function fmtMHz(hz){return (hz/1e6).toFixed(3).replace(/0+$/,'').replace(/[.]$/,'')}
-function atcRender(active){
- $('atcbtns').innerHTML=atcPresets.map(function(p){
-  return '<button data-f="'+p.freq+'"'+(active===p.freq?' class="act"':'')+'>'+esc(p.label)+'</button>';}).join('');
- Array.prototype.forEach.call($('atcbtns').children,function(b){
-  b.onclick=function(){atcStart(parseInt(b.getAttribute('data-f'),10))};});
- var a=$('atcaudio');
- if(active){$('atcst').textContent='listening '+fmtMHz(active)+' MHz — P25 preempted';$('atcst').classList.add('on');
-  if(a.style.display==='none'){a.src='https://icecast.rg2.io/scanner-atc.mp3?t='+Date.now();a.style.display='block';}}
- else{$('atcst').textContent='idle';$('atcst').classList.remove('on');a.style.display='none';a.removeAttribute('src');}
-}
-function atcStart(freq){fetch('/api/atc/start',{method:'POST',body:JSON.stringify({freq:freq})})
- .then(function(r){return r.json()}).then(function(d){if(d.msg&&d.active===null)$('atcst').textContent=d.msg;atcRender(d.active);});}
-function atcStop(){fetch('/api/atc/stop',{method:'POST'}).then(function(r){return r.json()}).then(function(d){atcRender(d.active);});}
-function atcPoll(){fetch('/api/atc',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
- atcPresets=d.presets||[];atcRender(d.active);}).catch(function(){});}
-$('atcgo').onclick=function(){var v=parseFloat($('atcf').value);if(v){atcStart(Math.round(v<1000?v*1e6:v));}};
-$('atcstop').onclick=atcStop;
-poll();loadLog();atcPoll();setInterval(poll,3000);setInterval(loadLog,12000);setInterval(atcPoll,5000);
-</script></body></html>
-"""
+var audio=$('audio'), STREAM='https://icecast.rg2.io/scanner-atc.mp3';
+var presets=[], active=null, isPlaying=false, tuning=false;
+function esc(s){return String(s).replace(/[&<>]/g,function(m){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[m]})}
+function fmtMHz(hz){return (hz/1e6).toFixed(3)}
+function modeLabel(m){return m==='am'?'AM':'NFM'}
+function showToast(m){var t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._tm);t._tm=setTimeout(function(){t.classList.remove('show')},2800)}
+function setLed(s){var l=$('led');l.classList.remove('on','amber','err');if(s)l.classList.add(s)}
+function setStatus(m){$('status').textContent=m||''}
+function lcd(freq,mode,label){
+ if(!freq){$('band').textContent='P25';$('freq').innerHTML='---.---<span class="unit">MHz</span>';$('call').innerHTML='MOSWIN P25 scanning &middot; pick a preset to monitor';return}
+ $('band').textContent=modeLabel(mode);
+ $('freq').innerHTML=fmtMHz(freq)+'<span class="unit">MHz</span>';
+ $('call').innerHTML=label?esc(label)+' <span class="sub">&middot; '+fmtMHz(freq)+' '+modeLabel(mode)+'</span>':'<span class="sub">'+fmtMHz(freq)+'</span>'}
+function renderPresets(){
+ var g=$('presets');g.innerHTML='';
+ presets.forEach(function(p){
+  var b=document.createElement('button');
+  b.className='preset'+(active&&active===p.freq?' active':'');
+  b.innerHTML='<span class="plabel">'+esc(p.label)+'</span><span class="pdesc">'+fmtMHz(p.freq)+' '+modeLabel(p.mode)+'</span>';
+  b.addEventListener('click',function(){tune(p.freq,p.mode,p.label)});
+  g.appendChild(b)})}
+function playAudio(){var sep=STREAM.indexOf('?')>=0?'&':'?';audio.src=STREAM+sep+'t='+Date.now();audio.volume=$('vol').value/100;
+ var pr=audio.play();if(pr&&pr.catch)pr.catch(function(e){isPlaying=false;$('play').innerHTML='&#9654;';setLed('err');showToast('Play failed: '+e.message)});
+ isPlaying=true;$('play').innerHTML='&#10073;&#10073;'}
+function pauseAudio(){audio.pause();audio.src='';isPlaying=false;$('play').innerHTML='&#9654;'}
+function tune(freq,mode,label){
+ if(tuning)return;tuning=true;setStatus('Tuning '+fmtMHz(freq)+' '+modeLabel(mode)+'…');setLed('amber');if(isPlaying)pauseAudio();
+ var sq=parseInt($('sq').value)||0;
+ fetch('/api/monitor/tune',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({freq:freq,mode:mode,squelch:sq})})
+  .then(function(r){return r.json()}).then(function(j){
+   if(j.msg&&!j.active)throw new Error(j.msg);
+   active=freq;lcd(freq,mode,label);renderPresets();$('stop').disabled=false;
+   setStatus('Waiting for stream…');return waitActive(freq)})
+  .then(function(){setStatus('');setLed('on');playAudio()})
+  .catch(function(e){setLed('err');setStatus('Error: '+e.message);showToast('Tune failed: '+e.message)})
+  .then(function(){tuning=false})}
+function waitActive(freq){
+ var deadline=Date.now()+22000;
+ return new Promise(function(resolve){
+  (function poll(){
+   if(Date.now()>deadline){resolve();return}
+   fetch('/api/monitor',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+    if(d.active&&d.freq===freq){setTimeout(resolve,3000)}else{setTimeout(poll,600)}
+   }).catch(function(){setTimeout(poll,600)})
+  })()})}
+function stop(){pauseAudio();setLed('');
+ fetch('/api/monitor/stop',{method:'POST'}).catch(function(){});
+ active=null;$('stop').disabled=true;lcd(null,null,null);renderPresets();setStatus('Stopped — P25 resuming');setTimeout(function(){setStatus('')},2500)}
+function commitDirect(){var f=$('dtfreq').value.trim();if(!f){showToast('Enter a frequency');return}
+ var m=$('dtmode').value;$('tunemodal').classList.remove('show');
+ var hz=parseFloat(f.replace(/[mM]$/,''));hz=hz<1000?hz*1e6:hz;tune(Math.round(hz),m,f)}
+function pollState(){
+ fetch('/api/monitor',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+  if(d.presets&&d.presets.length&&!presets.length){presets=d.presets;renderPresets()}
+  if(d.mount)STREAM=d.mount;
+  if(!d.active&&active!==null&&!tuning){active=null;pauseAudio();setLed('');$('stop').disabled=true;lcd(null,null,null);renderPresets();setStatus('Monitor ended — P25 resumed')}
+  if(d.active&&active===null){active=d.freq;var p=presets.filter(function(x){return x.freq===d.freq})[0];lcd(d.freq,d.mode,p?p.label:'');$('stop').disabled=false;setLed('on');renderPresets()}
+ }).catch(function(){})}
+function pollCap(){fetch('/api/transcribe',{cache:'no-store'}).then(function(r){return r.json()}).then(function(c){
+ var fresh=c.text&&(Date.now()/1000-(c.updated||0)<30);
+ if(fresh){$('caplabel').textContent=c.context||'caption';$('captext').textContent=c.text;$('capbox').style.display='block'}else{$('capbox').style.display='none'}
+}).catch(function(){})}
+$('play').addEventListener('click',function(){if(isPlaying)pauseAudio();else if(active)playAudio();else showToast('Pick a preset first')});
+$('stop').addEventListener('click',stop);
+$('tune').addEventListener('click',function(){$('tunemodal').classList.add('show');setTimeout(function(){$('dtfreq').focus()},60)});
+$('dtgo').addEventListener('click',commitDirect);
+$('dtcancel').addEventListener('click',function(){$('tunemodal').classList.remove('show')});
+$('dtfreq').addEventListener('keydown',function(e){if(e.key==='Enter')commitDirect();if(e.key==='Escape')$('tunemodal').classList.remove('show')});
+$('tunemodal').addEventListener('click',function(e){if(e.target.id==='tunemodal')$('tunemodal').classList.remove('show')});
+$('vol').addEventListener('input',function(e){audio.volume=e.target.value/100;localStorage.setItem('mon.vol',e.target.value);
+ $('volicon').innerHTML=e.target.value==0?'&#128263;':e.target.value<50?'&#128264;':'&#128266;'});
+$('sq').addEventListener('input',function(e){var v=parseInt(e.target.value);$('sqval').textContent=v===0?'OFF':v;localStorage.setItem('mon.sq',v)});
+var sv=localStorage.getItem('mon.vol');if(sv!=null){$('vol').value=sv;$('vol').dispatchEvent(new Event('input'))}
+var ss=localStorage.getItem('mon.sq');if(ss!=null){$('sq').value=ss;$('sq').dispatchEvent(new Event('input'))}
+pollState();pollCap();setInterval(pollState,4000);setInterval(pollCap,3000);
+</script></body></html>"""
 
 
 def log(msg: str) -> None:
@@ -485,10 +615,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, transcript_payload(date, limit))
         elif url.path == "/api/monitor/squelch":
             self._send(200, {"enabled": False, "active_on_monitor": False})
-        elif url.path == "/api/atc":
-            self._send(200, {"active": atc_active_freq(), "mount": ATC_MOUNT,
-                             "presets": ATC_PRESETS,
-                             "note": "starting ATC preempts P25; auto-returns after 10 min"})
+        elif url.path == "/api/monitor":
+            self._send(200, monitor_state())
         elif url.path.startswith("/recordings/"):
             self._send(404, {"error": "no recordings on scanner v2 yet"})
         else:
@@ -501,21 +629,23 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
         if url.path == "/api/source/moswin":
             self._send(200, {"status": "already moswin", "source": "moswin"})
-        elif url.path == "/api/atc/start":
-            try:
-                freq = int(json.loads(body or "{}").get("freq"))
-            except (ValueError, TypeError):
-                self._send(400, {"error": "freq (Hz int) required"})
-                return
-            ok, msg = atc_set(freq)
-            self._send(200 if ok else 400, {"active": atc_active_freq(), "msg": msg})
-        elif url.path == "/api/atc/stop":
-            _ok, msg = atc_set(None)
-            self._send(200, {"active": atc_active_freq(), "msg": msg})
         elif url.path == "/api/monitor/tune":
-            self._send(400, {"error": "aviation monitor is /api/atc on scanner v2"})
-        elif url.path == "/api/monitor/squelch":
-            self._send(503, {"error": "no monitor pipeline on scanner v2"})
+            try:
+                d = json.loads(body or "{}")
+                freq = parse_freq(d["freq"])
+            except (ValueError, TypeError, KeyError):
+                self._send(400, {"error": "freq required (e.g. 162.550M or Hz)"})
+                return
+            ok, msg = monitor_tune(freq, str(d.get("mode", "nfm")),
+                                   float(d.get("squelch", 0) or 0))
+            st = monitor_state()
+            st["msg"] = msg
+            self._send(200 if ok else 400, st)
+        elif url.path == "/api/monitor/stop":
+            _ok, msg = monitor_stop()
+            st = monitor_state()
+            st["msg"] = msg
+            self._send(200, st)
         else:
             self._send(404, {"error": "not found"})
 
