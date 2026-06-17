@@ -31,6 +31,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -57,6 +58,52 @@ EVENTS_MAX      = 500    # ring buffer size
 COMPACT_BYTES   = 1_000_000
 
 _CLIENT_UUID = str(uuid.uuid4())
+
+# ---- ATC airband (on-demand; preempts P25) -------------------------------
+# A click starts atc-listen@<freq>.service on this host, which stops op25 + the
+# rtl_tcp bridge to free the Airspy R2, AM-demods the airband channel to the rack
+# Icecast /scanner-atc.mp3, and auto-returns to P25 after 10 min (RuntimeMaxSec)
+# or on stop. systemctl start/stop is sudo-granted to this user (scanner-atc
+# sudoers drop-in).
+ATC_PRESETS = [
+    {"label": "AWOS 120.55", "freq": 120550000},
+    {"label": "Tower 119.0", "freq": 119000000},
+    {"label": "Approach 133.65", "freq": 133650000},
+    {"label": "Ground 121.6", "freq": 121600000},
+]
+ATC_MOUNT = "https://icecast.rg2.io/scanner-atc.mp3"
+ATC_MIN_HZ, ATC_MAX_HZ = 118_000_000, 137_000_000   # airband voice
+
+
+def atc_active_freq():
+    """The freq (Hz) of the running atc-listen@ instance, or None."""
+    try:
+        out = subprocess.run(
+            ["systemctl", "list-units", "--type=service", "--state=active",
+             "--no-legend", "--plain", "atc-listen@*"],
+            capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"atc-listen@(\d+)\.service", out)
+        return int(m.group(1)) if m else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def atc_set(freq):
+    """Start ATC on freq (preempts P25); freq=None stops it. -> (ok, message)."""
+    cur = atc_active_freq()
+    if freq is None:
+        if cur is not None:
+            subprocess.run(["sudo", "systemctl", "stop", f"atc-listen@{cur}"], timeout=25)
+        return True, "stopped"
+    if not (ATC_MIN_HZ <= freq <= ATC_MAX_HZ):
+        return False, "frequency out of airband (118-137 MHz)"
+    if cur is not None and cur != freq:
+        subprocess.run(["sudo", "systemctl", "stop", f"atc-listen@{cur}"], timeout=25)
+    r = subprocess.run(["sudo", "systemctl", "start", f"atc-listen@{freq}"],
+                       capture_output=True, text=True, timeout=25)
+    if r.returncode != 0:
+        return False, (r.stderr or "start failed").strip()
+    return True, "started"
 
 # Minimal human UI served at "/" (ems.rg2.io): live EMS caption + recent
 # transcript log, polling the same-origin /api/transcribe + /api/transcript
@@ -88,6 +135,15 @@ main{max-width:780px;margin:0 auto;padding:1rem}
 .empty{color:var(--dim);padding:1rem;text-align:center}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--dim);display:inline-block;transition:background .3s}
 .dot.on{background:var(--green)}
+.atc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.9rem 1.1rem;margin-bottom:1rem}
+.atch{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.6rem;flex-wrap:wrap}
+.atch b{font-weight:600}.atch .st{font-size:.8rem;color:var(--dim)}.atch .st.on{color:var(--green)}
+.btns{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.55rem}
+.btns button,.man button{background:#23262c;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:.42rem .7rem;font:inherit;font-size:.85rem;cursor:pointer}
+.btns button.act{background:var(--accent);color:#06121f;border-color:var(--accent);font-weight:600}
+.man{display:flex;gap:.4rem}
+.man input{flex:1;min-width:0;background:#0d0e10;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:.42rem .6rem;font:inherit}
+.man button.stop{background:#3a2326;border-color:#5a2e34}
 </style></head><body>
 <header>
 <span class="dot" id="dot"></span>
@@ -96,6 +152,12 @@ main{max-width:780px;margin:0 auto;padding:1rem}
 <audio controls preload="none" src="https://icecast.rg2.io/ems.mp3"></audio>
 </header>
 <main>
+<div class="atc" id="atc">
+<div class="atch"><span><b>ATC</b> <span class="sub">airband &middot; preempts P25</span></span><span class="st" id="atcst">idle</span></div>
+<div class="btns" id="atcbtns"></div>
+<div class="man"><input id="atcf" placeholder="tune MHz, e.g. 124.2" inputmode="decimal"><button id="atcgo">Listen</button><button id="atcstop" class="stop">Stop</button></div>
+<audio id="atcaudio" controls preload="none" style="display:none;width:100%;margin-top:.6rem"></audio>
+</div>
 <div class="live" id="live"><div class="ctx" id="ctx">MOSWIN P25</div>
 <div class="txt" id="txt">&hellip;</div><div class="age" id="age"></div></div>
 <div class="log"><h2>Recent</h2><div id="rows"><div class="empty">Loading&hellip;</div></div></div>
@@ -117,7 +179,26 @@ function loadLog(){fetch('/api/transcript?limit=60',{cache:'no-store'}).then(fun
   return '<div class="row"><time>'+t+'</time><span>'+esc(e.text)+'</span></div>';}).join(''):
   '<div class="empty">No captions yet today.</div>';
 }).catch(function(){});}
-poll();loadLog();setInterval(poll,3000);setInterval(loadLog,12000);
+var atcPresets=[];
+function fmtMHz(hz){return (hz/1e6).toFixed(3).replace(/0+$/,'').replace(/[.]$/,'')}
+function atcRender(active){
+ $('atcbtns').innerHTML=atcPresets.map(function(p){
+  return '<button data-f="'+p.freq+'"'+(active===p.freq?' class="act"':'')+'>'+esc(p.label)+'</button>';}).join('');
+ Array.prototype.forEach.call($('atcbtns').children,function(b){
+  b.onclick=function(){atcStart(parseInt(b.getAttribute('data-f'),10))};});
+ var a=$('atcaudio');
+ if(active){$('atcst').textContent='listening '+fmtMHz(active)+' MHz — P25 preempted';$('atcst').classList.add('on');
+  if(a.style.display==='none'){a.src='https://icecast.rg2.io/scanner-atc.mp3?t='+Date.now();a.style.display='block';}}
+ else{$('atcst').textContent='idle';$('atcst').classList.remove('on');a.style.display='none';a.removeAttribute('src');}
+}
+function atcStart(freq){fetch('/api/atc/start',{method:'POST',body:JSON.stringify({freq:freq})})
+ .then(function(r){return r.json()}).then(function(d){if(d.msg&&d.active===null)$('atcst').textContent=d.msg;atcRender(d.active);});}
+function atcStop(){fetch('/api/atc/stop',{method:'POST'}).then(function(r){return r.json()}).then(function(d){atcRender(d.active);});}
+function atcPoll(){fetch('/api/atc',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+ atcPresets=d.presets||[];atcRender(d.active);}).catch(function(){});}
+$('atcgo').onclick=function(){var v=parseFloat($('atcf').value);if(v){atcStart(Math.round(v<1000?v*1e6:v));}};
+$('atcstop').onclick=atcStop;
+poll();loadLog();atcPoll();setInterval(poll,3000);setInterval(loadLog,12000);setInterval(atcPoll,5000);
 </script></body></html>
 """
 
@@ -404,6 +485,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, transcript_payload(date, limit))
         elif url.path == "/api/monitor/squelch":
             self._send(200, {"enabled": False, "active_on_monitor": False})
+        elif url.path == "/api/atc":
+            self._send(200, {"active": atc_active_freq(), "mount": ATC_MOUNT,
+                             "presets": ATC_PRESETS,
+                             "note": "starting ATC preempts P25; auto-returns after 10 min"})
         elif url.path.startswith("/recordings/"):
             self._send(404, {"error": "no recordings on scanner v2 yet"})
         else:
@@ -411,15 +496,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urlparse(self.path)
-        # drain any body so keep-alive stays sane
+        # read the body (needed for ATC start; drained otherwise for keep-alive)
         length = int(self.headers.get("Content-Length") or 0)
-        if length:
-            self.rfile.read(length)
+        body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
         if url.path == "/api/source/moswin":
             self._send(200, {"status": "already moswin", "source": "moswin"})
+        elif url.path == "/api/atc/start":
+            try:
+                freq = int(json.loads(body or "{}").get("freq"))
+            except (ValueError, TypeError):
+                self._send(400, {"error": "freq (Hz int) required"})
+                return
+            ok, msg = atc_set(freq)
+            self._send(200 if ok else 400, {"active": atc_active_freq(), "msg": msg})
+        elif url.path == "/api/atc/stop":
+            _ok, msg = atc_set(None)
+            self._send(200, {"active": atc_active_freq(), "msg": msg})
         elif url.path == "/api/monitor/tune":
-            self._send(400, {"error": "aviation monitor not available on "
-                                      "scanner v2 (returns with the Airspy R2)"})
+            self._send(400, {"error": "aviation monitor is /api/atc on scanner v2"})
         elif url.path == "/api/monitor/squelch":
             self._send(503, {"error": "no monitor pipeline on scanner v2"})
         else:
