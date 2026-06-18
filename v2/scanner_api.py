@@ -115,33 +115,20 @@ def monitor_state():
 
 
 def monitor_tune(freq, mode, squelch):
-    """Write monitor.env + (re)start monitor.service. -> (ok, message)."""
+    """ATC/airband tune — routes through the R2-mode coordinator (so it stops all
+    R2 users + bounces the source fresh, not just restarts monitor.service). The
+    coordinator owns the single-tuner R2. -> (ok, message)."""
     if not (MON_MIN_HZ <= freq <= MON_MAX_HZ):
         return False, "frequency out of range"
     mode = {"fm": "nfm", "nfm": "nfm", "am": "am"}.get(mode, "")
     if not mode:
         return False, "mode must be nfm or am"
-    gains = "LNA:13,MIX:12,VGA:13" if mode == "nfm" else "LNA:14,MIX:13,VGA:14"
-    sq = round(max(0.0, squelch) / 150.0 * 0.03, 4) if squelch else 0.0
-    try:
-        with open(MONITOR_ENV, "w") as f:
-            f.write(f"MON_FREQ={int(freq)}\nMON_MODE={mode}\n"
-                    f"MON_GAINS={gains}\nMON_SQUELCH={sq}\n")
-        r = subprocess.run(["sudo", "systemctl", "restart", "monitor.service"],
-                           capture_output=True, text=True, timeout=25)
-        if r.returncode != 0:
-            return False, (r.stderr or "start failed").strip()
-        return True, "tuned"
-    except Exception as e:  # noqa: BLE001
-        return False, str(e)
+    return r2_set_mode("atc", freq, mode, squelch)
 
 
 def monitor_stop():
-    try:
-        subprocess.run(["sudo", "systemctl", "stop", "monitor.service"], timeout=25)
-    except Exception:  # noqa: BLE001
-        pass
-    return True, "stopped"
+    # Stopping ATC returns the R2 to its NOAA default (via the coordinator).
+    return r2_set_mode("noaa")
 
 
 # ---- R2-mode coordinator (Phase 4): the discone/R2 is single-tuner, so NOAA /
@@ -164,13 +151,26 @@ def r2_state():
     return {"mode": "idle", "unit": None}
 
 
-def r2_set_mode(mode):
-    if mode not in ("noaa", "p25"):
-        return False, f"invalid mode {mode!r} (noaa|p25)"
+def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
     # r2-mode.sh takes ~15s (stop-all + Pi source bounce + start) and op25's CC
     # lock takes longer still — fire-and-forget; the GUI polls /api/r2/state.
-    subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", mode])
-    return True, f"switching R2 -> {mode}"
+    if mode in ("noaa", "p25"):
+        subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", mode])
+        return True, f"switching R2 -> {mode}"
+    if mode == "atc":
+        if not freq:
+            return False, "atc requires freq"
+        gains = "LNA:13,MIX:12,VGA:13" if audio_mode == "nfm" else "LNA:14,MIX:13,VGA:14"
+        sq = round(max(0.0, squelch) / 150.0 * 0.03, 4) if squelch else 0.0
+        try:
+            with open(MONITOR_ENV, "w") as f:
+                f.write(f"MON_FREQ={int(freq)}\nMON_MODE={audio_mode}\n"
+                        f"MON_GAINS={gains}\nMON_SQUELCH={sq}\n")
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)
+        subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", "atc"])
+        return True, f"switching R2 -> atc {int(freq)}"
+    return False, f"invalid mode {mode!r} (noaa|p25|atc)"
 
 
 # Minimal human UI served at "/" (ems.rg2.io): live EMS caption + recent
@@ -681,11 +681,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, st)
         elif url.path == "/api/r2/mode":
             try:
-                mode = str(json.loads(body or "{}").get("mode", ""))
-            except (ValueError, TypeError):
-                self._send(400, {"error": "mode required (noaa|p25)"})
+                d = json.loads(body or "{}")
+                mode = str(d.get("mode", ""))
+                freq = parse_freq(d["freq"]) if d.get("freq") else None
+            except (ValueError, TypeError, KeyError):
+                self._send(400, {"error": "mode required (noaa|p25|atc); atc needs freq"})
                 return
-            ok, msg = r2_set_mode(mode)
+            ok, msg = r2_set_mode(mode, freq, str(d.get("audio_mode", "am")),
+                                  float(d.get("squelch", 0) or 0))
             self._send(200 if ok else 400, {"ok": ok, "msg": msg, **r2_state()})
         else:
             self._send(404, {"error": "not found"})
