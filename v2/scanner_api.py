@@ -143,6 +143,36 @@ def monitor_stop():
         pass
     return True, "stopped"
 
+
+# ---- R2-mode coordinator (Phase 4): the discone/R2 is single-tuner, so NOAA /
+# P25 are mutually exclusive. r2-mode.sh is the single authority — it stops all R2
+# users, bounces the Pi source fresh (it degrades on client switches), and starts
+# the requested mode. Exposed so the unified GUI can preempt for P25 on demand.
+R2_UNITS = [("noaa", "wx-on-r2.service"), ("p25", "op25-ems.service"),
+            ("atc", "monitor.service")]
+
+
+def _unit_active(unit):
+    return subprocess.run(["systemctl", "is-active", unit],
+                          capture_output=True, text=True).stdout.strip() == "active"
+
+
+def r2_state():
+    for mode, unit in R2_UNITS:
+        if _unit_active(unit):
+            return {"mode": mode, "unit": unit}
+    return {"mode": "idle", "unit": None}
+
+
+def r2_set_mode(mode):
+    if mode not in ("noaa", "p25"):
+        return False, f"invalid mode {mode!r} (noaa|p25)"
+    # r2-mode.sh takes ~15s (stop-all + Pi source bounce + start) and op25's CC
+    # lock takes longer still — fire-and-forget; the GUI polls /api/r2/state.
+    subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", mode])
+    return True, f"switching R2 -> {mode}"
+
+
 # Minimal human UI served at "/" (ems.rg2.io): live EMS caption + recent
 # transcript log, polling the same-origin /api/transcribe + /api/transcript
 # endpoints. Stdlib-only, no templates — a plain literal (braces are CSS/JS, so
@@ -595,7 +625,8 @@ class Handler(BaseHTTPRequestHandler):
                 "service": "scanner-api (V2 bridge)",
                 "endpoints": ["/api/status", "/api/calls?limit=N",
                               "/api/transcribe", "/api/transcript?date=&limit=N",
-                              "/api/source/moswin", "/api/monitor/squelch"],
+                              "/api/source/moswin", "/api/monitor/squelch",
+                              "/api/r2/state", "/api/r2/mode (POST {mode:noaa|p25})"],
                 "audio": "https://icecast.rg2.io/ems.mp3",
                 "console": "https://scanner.rg2.io/",
                 "ui": "/",
@@ -617,6 +648,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"enabled": False, "active_on_monitor": False})
         elif url.path == "/api/monitor":
             self._send(200, monitor_state())
+        elif url.path == "/api/r2/state":
+            self._send(200, r2_state())
         elif url.path.startswith("/recordings/"):
             self._send(404, {"error": "no recordings on scanner v2 yet"})
         else:
@@ -646,6 +679,14 @@ class Handler(BaseHTTPRequestHandler):
             st = monitor_state()
             st["msg"] = msg
             self._send(200, st)
+        elif url.path == "/api/r2/mode":
+            try:
+                mode = str(json.loads(body or "{}").get("mode", ""))
+            except (ValueError, TypeError):
+                self._send(400, {"error": "mode required (noaa|p25)"})
+                return
+            ok, msg = r2_set_mode(mode)
+            self._send(200 if ok else 400, {"ok": ok, "msg": msg, **r2_state()})
         else:
             self._send(404, {"error": "not found"})
 
