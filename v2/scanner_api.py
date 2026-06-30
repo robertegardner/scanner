@@ -59,7 +59,7 @@ COMPACT_BYTES   = 1_000_000
 
 _CLIENT_UUID = str(uuid.uuid4())
 
-# ---- on-demand FM/AM monitor (the V1 tuner; preempts P25) -----------------
+# ---- on-demand FM/AM monitor (the V1 tuner; preempts NOAA, the default) ----
 # /api/monitor/tune writes /var/lib/scanner-compute/monitor.env and restarts
 # monitor.service, which stops op25 + the rtl_tcp bridge to free the R2,
 # NFM/AM-demods (monitor_stream.py) to /scanner-atc.mp3, and auto-returns to P25
@@ -134,7 +134,7 @@ def monitor_stop():
 # ---- R2-mode coordinator (Phase 4): the discone/R2 is single-tuner, so NOAA /
 # P25 are mutually exclusive. r2-mode.sh is the single authority — it stops all R2
 # users, bounces the Pi source fresh (it degrades on client switches), and starts
-# the requested mode. Exposed so the unified GUI can preempt for P25 on demand.
+# the requested mode. NOAA is the 24/7 default; P25 and ATC preempt it on demand.
 R2_UNITS = [("noaa", "wx-on-r2.service"), ("p25", "op25-ems.service"),
             ("atc", "monitor.service")]
 
@@ -245,19 +245,59 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--ambe
 .footer a{color:var(--text-dim);text-decoration:none}
 .note{font-size:.66rem;color:var(--text-faint);text-align:center;letter-spacing:.04em}
 @media (max-width:400px){.lcd-freq{font-size:2.4rem}input[type=range]{width:80px}}
+.hsub{font-size:.72rem;color:var(--text-faint);letter-spacing:.04em}
+.modebar{display:flex;gap:.4rem;background:#0d0e10;border:1px solid #000;border-radius:10px;padding:.35rem;box-shadow:inset 0 2px 8px rgba(0,0,0,.7)}
+.modebtn{flex:1;background:transparent;border:1px solid transparent;border-radius:7px;color:var(--text-dim);padding:.55rem .4rem;font-size:1rem;font-weight:700;letter-spacing:.04em;cursor:pointer;transition:all .12s;display:flex;flex-direction:column;align-items:center;gap:.15rem;min-height:50px;justify-content:center}
+.modebtn:hover{background:var(--bg-button);color:var(--text)}
+.modebtn.sel{background:#2c2520;border-color:var(--amber);color:var(--amber);text-shadow:0 0 8px rgba(255,174,58,.5)}
+.modebtn .sub{font-size:.58rem;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint);display:flex;align-items:center;gap:.3rem}
+.modebtn.sel .sub{color:var(--amber-dim)}
+.livedot{width:6px;height:6px;border-radius:50%;background:#333;display:inline-block}
+.modebtn.live .livedot{background:var(--green);box-shadow:0 0 6px var(--green)}
+.switching{font-size:.78rem;color:var(--amber);text-align:center;min-height:1.1em;letter-spacing:.03em;text-shadow:0 0 6px rgba(255,174,58,.3)}
+.panel{display:none;flex-direction:column;gap:1rem}
+.panel.show{display:flex}
+.simple-lcd{background:linear-gradient(180deg,#0d0e10,#16181c);border:1px solid #000;border-radius:10px;padding:1.1rem 1.25rem;box-shadow:inset 0 2px 8px rgba(0,0,0,.7);text-align:center}
+.simple-lcd .big{color:var(--amber);font-family:'Courier New',monospace;font-weight:700;font-size:1.7rem;text-shadow:0 0 10px rgba(255,174,58,.5);font-variant-numeric:tabular-nums}
+.simple-lcd .sub{color:var(--text-dim);font-size:.85rem;margin-top:.35rem}
+audio{width:100%;height:40px}
+.console-wrap{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0d0e10}
+.console-bar{display:flex;justify-content:space-between;align-items:center;padding:.45rem .75rem;font-size:.72rem;color:var(--text-dim);border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.08em}
+.console-bar a{color:var(--accent);text-decoration:none}
+.console-wrap iframe{width:100%;height:440px;border:0;display:block;background:#0d0e10}
 </style></head><body>
 <header>
-<h1>Scanner</h1>
-<nav><a href="https://scanner.rg2.io/">P25 console</a> &nbsp; <a href="https://p25.rg2.io/">archive</a> &nbsp; <a href="https://wx.rg2.io/">weather</a></nav>
+<h1>Scanner</h1><span class="hsub">discone &middot; single tuner</span>
+<nav><a href="https://p25.rg2.io/">archive</a> &nbsp; <a href="https://wx.rg2.io/">weather</a></nav>
 </header>
 <div class="wrap"><div class="tuner">
+<div class="modebar">
+<button class="modebtn" id="m-noaa">NOAA<span class="sub">default <span class="livedot"></span></span></button>
+<button class="modebtn" id="m-p25">P25<span class="sub">trunk <span class="livedot"></span></span></button>
+<button class="modebtn" id="m-atc">ATC<span class="sub">airband <span class="livedot"></span></span></button>
+</div>
+<div class="switching" id="switching"></div>
+<div class="panel" id="p-noaa">
+<div class="simple-lcd"><div class="big">NOAA Weather Radio</div><div class="sub">162.550 MHz &middot; 24/7 default</div></div>
+<audio id="noaaaudio" controls preload="none" src="https://icecast.rg2.io/wx.mp3"></audio>
+</div>
+<div class="panel" id="p-p25">
+<div class="simple-lcd"><div class="big" id="p25tg">MOSWIN P25</div><div class="sub" id="p25sub">trunk scanner</div></div>
+<audio id="p25audio" controls preload="none"></audio>
+<div id="capbox" style="display:none;padding:10px 14px;background:#11151f;border:1px solid #2d3148;border-radius:8px;color:#cbd5e1;font-style:italic;line-height:1.4">
+<span id="caplabel" style="font-style:normal;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-right:8px">caption</span><span id="captext"></span></div>
+<div class="console-wrap" id="console" style="display:none">
+<div class="console-bar"><span>op25 console</span><a id="consolefs" href="https://scanner.rg2.io/" target="_blank" rel="noopener">open fullscreen &#8599;</a></div>
+<iframe id="consoleframe" title="op25 console" referrerpolicy="no-referrer"></iframe></div>
+</div>
+<div class="panel" id="p-atc">
 <div class="lcd">
-<div class="lcd-row"><div class="lcd-band" id="band">P25</div>
+<div class="lcd-row"><div class="lcd-band" id="band">ATC</div>
 <div class="lcd-status"><span class="led" id="led"></span> <span id="ledtxt">MONITOR</span></div></div>
 <div class="lcd-freq" id="freq">---.---<span class="unit">MHz</span></div>
-<div class="lcd-call" id="call">MOSWIN P25 scanning &middot; pick a preset to monitor</div>
+<div class="lcd-call" id="call">Airband / FM monitor &middot; pick a preset or direct-tune</div>
 </div>
-<div><div class="presets-label">Presets &mdash; click to monitor (preempts P25)</div>
+<div><div class="presets-label">Presets &mdash; click to monitor (preempts NOAA)</div>
 <div class="presets" id="presets"></div></div>
 <div class="controls">
 <div class="ctrl-left"><button class="btn danger" id="stop" disabled>&#9632; Stop</button>
@@ -269,10 +309,9 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--ambe
 <div class="sq-row"><span class="sq-label">SQ</span>
 <input type="range" id="sq" min="0" max="150" value="0" style="width:120px">
 <span class="sq-val" id="sqval">OFF</span><span class="sq-hint">re-tune to apply</span></div>
+<div class="note">Tuning ATC/airband preempts NOAA (the 24/7 default) and auto-returns after 30 min.</div>
+</div>
 <div class="status-bar" id="status"></div>
-<div id="capbox" style="display:none;margin-top:4px;padding:10px 14px;background:#11151f;border:1px solid #2d3148;border-radius:8px;color:#cbd5e1;font-style:italic;line-height:1.4">
-<span id="caplabel" style="font-style:normal;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-right:8px">caption</span><span id="captext"></span></div>
-<div class="note">Monitoring preempts the P25 scanner and auto-returns after 30 min.</div>
 <div class="footer"><a href="/transcript">transcript log</a></div>
 </div></div>
 <audio id="audio" preload="none"></audio>
@@ -285,16 +324,57 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--ambe
 <script>
 'use strict';
 var $=function(i){return document.getElementById(i)};
-var audio=$('audio'), STREAM='https://icecast.rg2.io/scanner-atc.mp3';
+var ICE='https://icecast.rg2.io';
+var ATC_MOUNT=ICE+'/scanner-atc.mp3';
+var audio=$('audio');
 var presets=[], active=null, isPlaying=false, tuning=false;
+var activeMode='idle', view=null, pending=null, pendingSince=0;
+var allAudio=['noaaaudio','p25audio','audio'].map($).filter(Boolean);
+allAudio.forEach(function(a){a.addEventListener('play',function(){allAudio.forEach(function(b){if(b!==a)b.pause()})})});
 function esc(s){return String(s).replace(/[&<>]/g,function(m){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[m]})}
 function fmtMHz(hz){return (hz/1e6).toFixed(3)}
 function modeLabel(m){return m==='am'?'AM':'NFM'}
 function showToast(m){var t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._tm);t._tm=setTimeout(function(){t.classList.remove('show')},2800)}
 function setLed(s){var l=$('led');l.classList.remove('on','amber','err');if(s)l.classList.add(s)}
 function setStatus(m){$('status').textContent=m||''}
+function setSwitching(m){$('switching').textContent=m||''}
+// ---- mode switcher + panels ----
+function setView(m){view=m;
+ ['noaa','p25','atc'].forEach(function(k){$('p-'+k).classList.toggle('show',k===m);$('m-'+k).classList.toggle('sel',k===m)});
+ if(m==='p25')ensureConsole()}
+function clickMode(m){
+ setView(m);
+ if(m==='atc')return;                         // ATC switches the R2 on tune
+ if(activeMode!==m){pending=m;pendingSince=Date.now();
+  setSwitching('Switching to '+m.toUpperCase()+'… ~15s (takes the shared tuner)');
+  fetch('/api/r2/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}).catch(function(){})}}
+function ensureConsole(){
+ var f=$('consoleframe'), show=(view==='p25'&&activeMode==='p25');
+ $('console').style.display=show?'block':'none';
+ if(show){if(f.dataset.loaded!=='1'){f.src='https://scanner.rg2.io/';f.dataset.loaded='1'}}
+ else{f.removeAttribute('src');f.dataset.loaded=''}}
+function applyR2(d){
+ activeMode=d.mode||'idle';
+ ['noaa','p25','atc'].forEach(function(k){$('m-'+k).classList.toggle('live',k===activeMode)});
+ if(pending){if(activeMode===pending){pending=null;setSwitching('')}
+  else if(Date.now()-pendingSince>30000){pending=null;setSwitching('')}}
+ if(view===null)setView(activeMode==='idle'?'noaa':activeMode);
+ if(view==='p25')ensureConsole();
+ if(activeMode==='p25'){var pa=$('p25audio');if(!pa.getAttribute('src'))pa.src=ICE+'/ems.mp3'}}
+// ---- P25 talkgroup + captions ----
+function pollStatus(){fetch('/api/status',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){
+ var c=s.current;
+ if(c&&c.detail){if(c.detail.indexOf('active:')===0){$('p25tg').textContent=c.detail.replace('active:','TG').trim();$('p25sub').textContent='call in progress'}
+  else{$('p25tg').textContent='MOSWIN P25';$('p25sub').textContent='monitoring control channel'}}
+ else{$('p25tg').textContent='MOSWIN P25';$('p25sub').textContent=(activeMode==='p25'?'control channel locking…':'not active')}
+}).catch(function(){})}
+function pollCap(){fetch('/api/transcribe',{cache:'no-store'}).then(function(r){return r.json()}).then(function(c){
+ var fresh=c.text&&(Date.now()/1000-(c.updated||0)<30);
+ if(fresh&&view==='p25'){$('caplabel').textContent=c.context||'caption';$('captext').textContent=c.text;$('capbox').style.display='block'}else{$('capbox').style.display='none'}
+}).catch(function(){})}
+// ---- ATC tuner (preempts NOAA) ----
 function lcd(freq,mode,label){
- if(!freq){$('band').textContent='P25';$('freq').innerHTML='---.---<span class="unit">MHz</span>';$('call').innerHTML='MOSWIN P25 scanning &middot; pick a preset to monitor';return}
+ if(!freq){$('band').textContent='ATC';$('freq').innerHTML='---.---<span class="unit">MHz</span>';$('call').innerHTML='Airband / FM monitor &middot; pick a preset or direct-tune';return}
  $('band').textContent=modeLabel(mode);
  $('freq').innerHTML=fmtMHz(freq)+'<span class="unit">MHz</span>';
  $('call').innerHTML=label?esc(label)+' <span class="sub">&middot; '+fmtMHz(freq)+' '+modeLabel(mode)+'</span>':'<span class="sub">'+fmtMHz(freq)+'</span>'}
@@ -306,20 +386,22 @@ function renderPresets(){
   b.innerHTML='<span class="plabel">'+esc(p.label)+'</span><span class="pdesc">'+fmtMHz(p.freq)+' '+modeLabel(p.mode)+'</span>';
   b.addEventListener('click',function(){tune(p.freq,p.mode,p.label)});
   g.appendChild(b)})}
-function playAudio(){var sep=STREAM.indexOf('?')>=0?'&':'?';audio.src=STREAM+sep+'t='+Date.now();audio.volume=$('vol').value/100;
+function playATC(){var u=ATC_MOUNT,sep=u.indexOf('?')>=0?'&':'?';audio.src=u+sep+'t='+Date.now();audio.volume=$('vol').value/100;
  var pr=audio.play();if(pr&&pr.catch)pr.catch(function(e){isPlaying=false;$('play').innerHTML='&#9654;';setLed('err');showToast('Play failed: '+e.message)});
  isPlaying=true;$('play').innerHTML='&#10073;&#10073;'}
-function pauseAudio(){audio.pause();audio.src='';isPlaying=false;$('play').innerHTML='&#9654;'}
+function pauseATC(){audio.pause();audio.src='';isPlaying=false;$('play').innerHTML='&#9654;'}
 function tune(freq,mode,label){
- if(tuning)return;tuning=true;setStatus('Tuning '+fmtMHz(freq)+' '+modeLabel(mode)+'…');setLed('amber');if(isPlaying)pauseAudio();
+ if(tuning)return;tuning=true;setView('atc');
+ setSwitching('Switching to ATC… ~15s (takes the shared tuner)');
+ setStatus('Tuning '+fmtMHz(freq)+' '+modeLabel(mode)+'…');setLed('amber');if(isPlaying)pauseATC();
  var sq=parseInt($('sq').value)||0;
  fetch('/api/monitor/tune',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({freq:freq,mode:mode,squelch:sq})})
-  .then(function(r){return r.json()}).then(function(j){
-   if(j.msg&&!j.active)throw new Error(j.msg);
+  .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(res){
+   if(!res.ok)throw new Error(res.j.error||res.j.msg||'tune failed');
    active=freq;lcd(freq,mode,label);renderPresets();$('stop').disabled=false;
    setStatus('Waiting for stream…');return waitActive(freq)})
-  .then(function(){setStatus('');setLed('on');playAudio()})
-  .catch(function(e){setLed('err');setStatus('Error: '+e.message);showToast('Tune failed: '+e.message)})
+  .then(function(){setStatus('');setSwitching('');setLed('on');playATC()})
+  .catch(function(e){setLed('err');setStatus('Error: '+e.message);setSwitching('');showToast('Tune failed: '+e.message)})
   .then(function(){tuning=false})}
 function waitActive(freq){
  var deadline=Date.now()+22000;
@@ -330,25 +412,23 @@ function waitActive(freq){
     if(d.active&&d.freq===freq){setTimeout(resolve,3000)}else{setTimeout(poll,600)}
    }).catch(function(){setTimeout(poll,600)})
   })()})}
-function stop(){pauseAudio();setLed('');
+function stopATC(){pauseATC();setLed('');
  fetch('/api/monitor/stop',{method:'POST'}).catch(function(){});
- active=null;$('stop').disabled=true;lcd(null,null,null);renderPresets();setStatus('Stopped — P25 resuming');setTimeout(function(){setStatus('')},2500)}
+ active=null;$('stop').disabled=true;lcd(null,null,null);renderPresets();setStatus('Stopped — returning to NOAA');setTimeout(function(){setStatus('')},2500)}
 function commitDirect(){var f=$('dtfreq').value.trim();if(!f){showToast('Enter a frequency');return}
  var m=$('dtmode').value;$('tunemodal').classList.remove('show');
  var hz=parseFloat(f.replace(/[mM]$/,''));hz=hz<1000?hz*1e6:hz;tune(Math.round(hz),m,f)}
-function pollState(){
+function pollMonitor(){
  fetch('/api/monitor',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
   if(d.presets&&d.presets.length&&!presets.length){presets=d.presets;renderPresets()}
-  if(d.mount)STREAM=d.mount;
-  if(!d.active&&active!==null&&!tuning){active=null;pauseAudio();setLed('');$('stop').disabled=true;lcd(null,null,null);renderPresets();setStatus('Monitor ended — P25 resumed')}
+  if(d.mount)ATC_MOUNT=d.mount;
+  if(!d.active&&active!==null&&!tuning){active=null;pauseATC();setLed('');$('stop').disabled=true;lcd(null,null,null);renderPresets()}
   if(d.active&&active===null){active=d.freq;var p=presets.filter(function(x){return x.freq===d.freq})[0];lcd(d.freq,d.mode,p?p.label:'');$('stop').disabled=false;setLed('on');renderPresets()}
  }).catch(function(){})}
-function pollCap(){fetch('/api/transcribe',{cache:'no-store'}).then(function(r){return r.json()}).then(function(c){
- var fresh=c.text&&(Date.now()/1000-(c.updated||0)<30);
- if(fresh){$('caplabel').textContent=c.context||'caption';$('captext').textContent=c.text;$('capbox').style.display='block'}else{$('capbox').style.display='none'}
-}).catch(function(){})}
-$('play').addEventListener('click',function(){if(isPlaying)pauseAudio();else if(active)playAudio();else showToast('Pick a preset first')});
-$('stop').addEventListener('click',stop);
+// ---- wiring ----
+['noaa','p25','atc'].forEach(function(k){$('m-'+k).addEventListener('click',function(){clickMode(k)})});
+$('play').addEventListener('click',function(){if(isPlaying)pauseATC();else if(active)playATC();else showToast('Pick a preset first')});
+$('stop').addEventListener('click',stopATC);
 $('tune').addEventListener('click',function(){$('tunemodal').classList.add('show');setTimeout(function(){$('dtfreq').focus()},60)});
 $('dtgo').addEventListener('click',commitDirect);
 $('dtcancel').addEventListener('click',function(){$('tunemodal').classList.remove('show')});
@@ -359,7 +439,9 @@ $('vol').addEventListener('input',function(e){audio.volume=e.target.value/100;lo
 $('sq').addEventListener('input',function(e){var v=parseInt(e.target.value);$('sqval').textContent=v===0?'OFF':v;localStorage.setItem('mon.sq',v)});
 var sv=localStorage.getItem('mon.vol');if(sv!=null){$('vol').value=sv;$('vol').dispatchEvent(new Event('input'))}
 var ss=localStorage.getItem('mon.sq');if(ss!=null){$('sq').value=ss;$('sq').dispatchEvent(new Event('input'))}
-pollState();pollCap();setInterval(pollState,4000);setInterval(pollCap,3000);
+function pollR2(){fetch('/api/r2/state',{cache:'no-store'}).then(function(r){return r.json()}).then(applyR2).catch(function(){})}
+pollR2();pollMonitor();pollStatus();pollCap();
+setInterval(pollR2,4000);setInterval(pollMonitor,5000);setInterval(pollStatus,4000);setInterval(pollCap,3000);
 </script></body></html>"""
 
 
