@@ -261,10 +261,15 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--ambe
 .simple-lcd .big{color:var(--amber);font-family:'Courier New',monospace;font-weight:700;font-size:1.7rem;text-shadow:0 0 10px rgba(255,174,58,.5);font-variant-numeric:tabular-nums}
 .simple-lcd .sub{color:var(--text-dim);font-size:.85rem;margin-top:.35rem}
 audio{width:100%;height:40px}
-.console-wrap{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0d0e10}
-.console-bar{display:flex;justify-content:space-between;align-items:center;padding:.45rem .75rem;font-size:.72rem;color:var(--text-dim);border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.08em}
-.console-bar a{color:var(--accent);text-decoration:none}
-.console-wrap iframe{width:100%;height:440px;border:0;display:block;background:#0d0e10}
+.xscript-wrap{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0d0e10}
+.xscript-bar{display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.45rem .75rem;font-size:.7rem;color:var(--text-dim);border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.06em}
+.xscript-bar a{color:var(--accent);text-decoration:none}
+.xscript{height:300px;overflow-y:auto;padding:.6rem .8rem;display:flex;flex-direction:column;gap:.5rem;font-size:.9rem;line-height:1.4}
+.xs-line{display:flex;gap:.6rem}
+.xs-line time{color:var(--text-faint);font-family:'Courier New',monospace;font-size:.72rem;flex:none;padding-top:.1rem}
+.xs-line .xt{color:var(--text)}
+.xs-line.live .xt{color:var(--amber);font-style:italic}
+.xs-empty{color:var(--text-faint);text-align:center;padding:1rem;font-size:.8rem}
 </style></head><body>
 <header>
 <h1>Scanner</h1><span class="hsub">discone &middot; single tuner</span>
@@ -284,11 +289,10 @@ audio{width:100%;height:40px}
 <div class="panel" id="p-p25">
 <div class="simple-lcd"><div class="big" id="p25tg">MOSWIN P25</div><div class="sub" id="p25sub">trunk scanner</div></div>
 <audio id="p25audio" controls preload="none"></audio>
-<div id="capbox" style="display:none;padding:10px 14px;background:#11151f;border:1px solid #2d3148;border-radius:8px;color:#cbd5e1;font-style:italic;line-height:1.4">
-<span id="caplabel" style="font-style:normal;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-right:8px">caption</span><span id="captext"></span></div>
-<div class="console-wrap" id="console" style="display:none">
-<div class="console-bar"><span>op25 console</span><a id="consolefs" href="https://scanner.rg2.io/" target="_blank" rel="noopener">open fullscreen &#8599;</a></div>
-<iframe id="consoleframe" title="op25 console" referrerpolicy="no-referrer"></iframe></div>
+<div class="xscript-wrap">
+<div class="xscript-bar"><span>live transcript &middot; MOSWIN P25</span>
+<span><a href="/transcript" target="_blank" rel="noopener">full log &#8599;</a> &nbsp; <a href="https://scanner.rg2.io/" target="_blank" rel="noopener">op25 console &#8599;</a></span></div>
+<div class="xscript" id="xscript"><div class="xs-empty">waiting for transcript&hellip;</div></div></div>
 </div>
 <div class="panel" id="p-atc">
 <div class="lcd">
@@ -340,38 +344,43 @@ function setStatus(m){$('status').textContent=m||''}
 function setSwitching(m){$('switching').textContent=m||''}
 // ---- mode switcher + panels ----
 function setView(m){view=m;
- ['noaa','p25','atc'].forEach(function(k){$('p-'+k).classList.toggle('show',k===m);$('m-'+k).classList.toggle('sel',k===m)});
- if(m==='p25')ensureConsole()}
+ ['noaa','p25','atc'].forEach(function(k){$('p-'+k).classList.toggle('show',k===m);$('m-'+k).classList.toggle('sel',k===m)})}
 function clickMode(m){
  setView(m);
  if(m==='atc')return;                         // ATC switches the R2 on tune
  if(activeMode!==m){pending=m;pendingSince=Date.now();
   setSwitching('Switching to '+m.toUpperCase()+'… ~15s (takes the shared tuner)');
   fetch('/api/r2/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}).catch(function(){})}}
-function ensureConsole(){
- var f=$('consoleframe'), show=(view==='p25'&&activeMode==='p25');
- $('console').style.display=show?'block':'none';
- if(show){if(f.dataset.loaded!=='1'){f.src='https://scanner.rg2.io/';f.dataset.loaded='1'}}
- else{f.removeAttribute('src');f.dataset.loaded=''}}
 function applyR2(d){
  activeMode=d.mode||'idle';
  ['noaa','p25','atc'].forEach(function(k){$('m-'+k).classList.toggle('live',k===activeMode)});
  if(pending){if(activeMode===pending){pending=null;setSwitching('')}
   else if(Date.now()-pendingSince>30000){pending=null;setSwitching('')}}
  if(view===null)setView(activeMode==='idle'?'noaa':activeMode);
- if(view==='p25')ensureConsole();
  if(activeMode==='p25'){var pa=$('p25audio');if(!pa.getAttribute('src'))pa.src=ICE+'/ems.mp3'}}
 // ---- P25 talkgroup + captions ----
 function pollStatus(){fetch('/api/status',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){
  var c=s.current;
- if(c&&c.detail){if(c.detail.indexOf('active:')===0){$('p25tg').textContent=c.detail.replace('active:','TG').trim();$('p25sub').textContent='call in progress'}
+ if(c&&c.detail){if(c.detail.indexOf('active:')===0){$('p25tg').textContent=c.detail.replace('active:','').trim()||'MOSWIN P25';$('p25sub').textContent='call in progress'}
   else{$('p25tg').textContent='MOSWIN P25';$('p25sub').textContent='monitoring control channel'}}
  else{$('p25tg').textContent='MOSWIN P25';$('p25sub').textContent=(activeMode==='p25'?'control channel locking…':'not active')}
 }).catch(function(){})}
-function pollCap(){fetch('/api/transcribe',{cache:'no-store'}).then(function(r){return r.json()}).then(function(c){
- var fresh=c.text&&(Date.now()/1000-(c.updated||0)<30);
- if(fresh&&view==='p25'){$('caplabel').textContent=c.context||'caption';$('captext').textContent=c.text;$('capbox').style.display='block'}else{$('capbox').style.display='none'}
-}).catch(function(){})}
+var xsAtBottom=true;
+function renderXscript(entries,live){
+ var box=$('xscript');if(!box)return;var html='';
+ entries.slice().reverse().forEach(function(e){var t=(e.ts||'').slice(11,19);
+  html+='<div class="xs-line"><time>'+esc(t)+'</time><span class="xt">'+esc(e.text||'')+'</span></div>'});
+ if(live)html+='<div class="xs-line live"><time>now</time><span class="xt">'+esc(live)+'</span></div>';
+ box.innerHTML=html||'<div class="xs-empty">waiting for transcript&hellip;</div>';
+ if(xsAtBottom)box.scrollTop=box.scrollHeight}
+function pollTranscript(){
+ fetch('/api/transcript?limit=60',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+  var es=d.entries||[],newest=(es[0]&&es[0].text)||'';
+  fetch('/api/transcribe',{cache:'no-store'}).then(function(r){return r.json()}).then(function(c){
+   var fresh=c.text&&(Date.now()/1000-(c.updated||0)<30);
+   renderXscript(es,(fresh&&c.text!==newest)?c.text:'')
+  }).catch(function(){renderXscript(es,'')})
+ }).catch(function(){})}
 // ---- ATC tuner (preempts NOAA) ----
 function lcd(freq,mode,label){
  if(!freq){$('band').textContent='ATC';$('freq').innerHTML='---.---<span class="unit">MHz</span>';$('call').innerHTML='Airband / FM monitor &middot; pick a preset or direct-tune';return}
@@ -440,8 +449,9 @@ $('sq').addEventListener('input',function(e){var v=parseInt(e.target.value);$('s
 var sv=localStorage.getItem('mon.vol');if(sv!=null){$('vol').value=sv;$('vol').dispatchEvent(new Event('input'))}
 var ss=localStorage.getItem('mon.sq');if(ss!=null){$('sq').value=ss;$('sq').dispatchEvent(new Event('input'))}
 function pollR2(){fetch('/api/r2/state',{cache:'no-store'}).then(function(r){return r.json()}).then(applyR2).catch(function(){})}
-pollR2();pollMonitor();pollStatus();pollCap();
-setInterval(pollR2,4000);setInterval(pollMonitor,5000);setInterval(pollStatus,4000);setInterval(pollCap,3000);
+(function(){var xb=$('xscript');if(xb)xb.addEventListener('scroll',function(){xsAtBottom=(xb.scrollHeight-xb.scrollTop-xb.clientHeight)<40})})();
+pollR2();pollMonitor();pollStatus();pollTranscript();
+setInterval(pollR2,4000);setInterval(pollMonitor,5000);setInterval(pollStatus,4000);setInterval(pollTranscript,5000);
 </script></body></html>"""
 
 
