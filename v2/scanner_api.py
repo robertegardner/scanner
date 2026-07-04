@@ -245,6 +245,7 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;background:var(--ambe
 .footer a{color:var(--text-dim);text-decoration:none}
 .note{font-size:.66rem;color:var(--text-faint);text-align:center;letter-spacing:.04em}
 @media (max-width:400px){.lcd-freq{font-size:2.4rem}input[type=range]{width:80px}}
+@media (max-width:520px){.modebtn{font-size:.82rem;padding:.5rem .2rem}.modebtn .sub{font-size:.52rem}}
 .hsub{font-size:.72rem;color:var(--text-faint);letter-spacing:.04em}
 .modebar{display:flex;gap:.4rem;background:#0d0e10;border:1px solid #000;border-radius:10px;padding:.35rem;box-shadow:inset 0 2px 8px rgba(0,0,0,.7)}
 .modebtn{flex:1;background:transparent;border:1px solid transparent;border-radius:7px;color:var(--text-dim);padding:.55rem .4rem;font-size:1rem;font-weight:700;letter-spacing:.04em;cursor:pointer;transition:all .12s;display:flex;flex-direction:column;align-items:center;gap:.15rem;min-height:50px;justify-content:center}
@@ -280,6 +281,8 @@ audio{width:100%;height:40px}
 <button class="modebtn" id="m-noaa">NOAA<span class="sub">default <span class="livedot"></span></span></button>
 <button class="modebtn" id="m-p25">P25<span class="sub">trunk <span class="livedot"></span></span></button>
 <button class="modebtn" id="m-atc">ATC<span class="sub">airband <span class="livedot"></span></span></button>
+<button class="modebtn" id="m-acars">ACARS<span class="sub">datalink <span class="livedot"></span></span></button>
+<button class="modebtn" id="m-vdl2">VDL2<span class="sub">datalink <span class="livedot"></span></span></button>
 </div>
 <div class="switching" id="switching"></div>
 <div class="panel" id="p-noaa">
@@ -293,6 +296,16 @@ audio{width:100%;height:40px}
 <div class="xscript-bar"><span>live transcript &middot; MOSWIN P25</span>
 <span><a href="/transcript" target="_blank" rel="noopener">full log &#8599;</a> &nbsp; <a href="https://scanner.rg2.io/" target="_blank" rel="noopener">op25 console &#8599;</a></span></div>
 <div class="xscript" id="xscript"><div class="xs-empty">waiting for transcript&hellip;</div></div></div>
+</div>
+<div class="panel" id="p-acars">
+<div class="simple-lcd"><div class="big">ACARS Datalink</div><div class="sub">130.025 / 130.450 / 131.125 / 131.550 MHz &middot; 4-ch</div></div>
+<div class="note">frames &rarr; ACARS Hub (local display + history) &rarr; relayed to airframes.io &middot; no audio</div>
+<a class="btn primary" href="https://acars.rg2.io/" target="_blank" rel="noopener" style="text-decoration:none">Open ACARS Hub &mdash; live messages &amp; map &#8599;</a>
+</div>
+<div class="panel" id="p-vdl2">
+<div class="simple-lcd"><div class="big">VDL Mode 2</div><div class="sub">136.975 / 136.650 / 136.800 / 136.925 MHz &middot; 4-ch</div></div>
+<div class="note">frames &rarr; ACARS Hub (local display + history) &rarr; relayed to airframes.io &middot; ~10x classic ACARS traffic</div>
+<a class="btn primary" href="https://acars.rg2.io/" target="_blank" rel="noopener" style="text-decoration:none">Open ACARS Hub &mdash; live messages &amp; map &#8599;</a>
 </div>
 <div class="panel" id="p-atc">
 <div class="lcd">
@@ -344,7 +357,7 @@ function setStatus(m){$('status').textContent=m||''}
 function setSwitching(m){$('switching').textContent=m||''}
 // ---- mode switcher + panels ----
 function setView(m){view=m;
- ['noaa','p25','atc'].forEach(function(k){$('p-'+k).classList.toggle('show',k===m);$('m-'+k).classList.toggle('sel',k===m)})}
+ ['noaa','p25','atc','acars','vdl2'].forEach(function(k){$('p-'+k).classList.toggle('show',k===m);$('m-'+k).classList.toggle('sel',k===m)})}
 function clickMode(m){
  setView(m);
  if(m==='atc')return;                         // ATC switches the R2 on tune
@@ -353,7 +366,7 @@ function clickMode(m){
   fetch('/api/r2/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}).catch(function(){})}}
 function applyR2(d){
  activeMode=d.mode||'idle';
- ['noaa','p25','atc'].forEach(function(k){$('m-'+k).classList.toggle('live',k===activeMode)});
+ ['noaa','p25','atc','acars','vdl2'].forEach(function(k){$('m-'+k).classList.toggle('live',k===activeMode)});
  if(pending){if(activeMode===pending){pending=null;setSwitching('')}
   else if(Date.now()-pendingSince>30000){pending=null;setSwitching('')}}
  if(view===null)setView(activeMode==='idle'?'noaa':activeMode);
@@ -435,7 +448,7 @@ function pollMonitor(){
   if(d.active&&active===null){active=d.freq;var p=presets.filter(function(x){return x.freq===d.freq})[0];lcd(d.freq,d.mode,p?p.label:'');$('stop').disabled=false;setLed('on');renderPresets()}
  }).catch(function(){})}
 // ---- wiring ----
-['noaa','p25','atc'].forEach(function(k){$('m-'+k).addEventListener('click',function(){clickMode(k)})});
+['noaa','p25','atc','acars','vdl2'].forEach(function(k){$('m-'+k).addEventListener('click',function(){clickMode(k)})});
 $('play').addEventListener('click',function(){if(isPlaying)pauseATC();else if(active)playATC();else showToast('Pick a preset first')});
 $('stop').addEventListener('click',stopATC);
 $('tune').addEventListener('click',function(){$('tunemodal').classList.add('show');setTimeout(function(){$('dtfreq').focus()},60)});
