@@ -136,7 +136,7 @@ def monitor_stop():
 # users, bounces the Pi source fresh (it degrades on client switches), and starts
 # the requested mode. NOAA is the 24/7 default; P25 and ATC preempt it on demand.
 R2_UNITS = [("noaa", "wx-on-r2.service"), ("p25", "op25-ems.service"),
-            ("atc", "monitor.service")]
+            ("atc", "monitor.service"), ("acars", "acars-on-r2.service"), ("vdl2", "vdl2-on-r2.service")]
 
 
 def _unit_active(unit):
@@ -154,7 +154,7 @@ def r2_state():
 def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
     # r2-mode.sh takes ~15s (stop-all + Pi source bounce + start) and op25's CC
     # lock takes longer still — fire-and-forget; the GUI polls /api/r2/state.
-    if mode in ("noaa", "p25"):
+    if mode in ("noaa", "p25", "acars", "vdl2"):
         subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", mode])
         return True, f"switching R2 -> {mode}"
     if mode == "atc":
@@ -170,7 +170,7 @@ def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
             return False, str(e)
         subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", "atc"])
         return True, f"switching R2 -> atc {int(freq)}"
-    return False, f"invalid mode {mode!r} (noaa|p25|atc)"
+    return False, f"invalid mode {mode!r} (noaa|p25|atc|acars|vdl2)"
 
 
 # Minimal human UI served at "/" (ems.rg2.io): live EMS caption + recent
