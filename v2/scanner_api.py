@@ -127,15 +127,19 @@ def monitor_tune(freq, mode, squelch):
 
 
 def monitor_stop():
-    # Stopping ATC returns the R2 to its NOAA default (via the coordinator).
-    return r2_set_mode("noaa")
+    # Stopping ATC just stops the monitor — the discone goes idle. It does NOT
+    # auto-return to NOAA: NOAA is retired from the discone (dedicated HF+ receiver
+    # serves /wx.mp3), and the R2 rests on the last-used mode with no auto-returns.
+    subprocess.Popen(["sudo", "/usr/bin/systemctl", "stop", "monitor.service"])
+    return True, "ATC stopped (R2 idle)"
 
 
-# ---- R2-mode coordinator (Phase 4): the discone/R2 is single-tuner, so NOAA /
-# P25 are mutually exclusive. r2-mode.sh is the single authority — it stops all R2
+# ---- R2-mode coordinator (Phase 4): the discone/R2 is single-tuner, so its modes
+# are mutually exclusive. r2-mode.sh is the single authority — it stops all R2
 # users, bounces the Pi source fresh (it degrades on client switches), and starts
-# the requested mode. NOAA is the 24/7 default; P25 and ATC preempt it on demand.
-R2_UNITS = [("noaa", "wx-on-r2.service"), ("p25", "op25-ems.service"),
+# the requested mode. NOAA is NO LONGER a discone mode (dedicated HF+ receiver);
+# the R2 rests on the last-used mode and never auto-returns.
+R2_UNITS = [("p25", "op25-ems.service"),
             ("atc", "monitor.service"), ("acars", "acars-on-r2.service"), ("vdl2", "vdl2-on-r2.service")]
 
 
@@ -154,7 +158,7 @@ def r2_state():
 def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
     # r2-mode.sh takes ~15s (stop-all + Pi source bounce + start) and op25's CC
     # lock takes longer still — fire-and-forget; the GUI polls /api/r2/state.
-    if mode in ("noaa", "p25", "acars", "vdl2"):
+    if mode in ("p25", "acars", "vdl2"):
         subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", mode])
         return True, f"switching R2 -> {mode}"
     if mode == "atc":
@@ -170,7 +174,7 @@ def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
             return False, str(e)
         subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", "atc"])
         return True, f"switching R2 -> atc {int(freq)}"
-    return False, f"invalid mode {mode!r} (noaa|p25|atc|acars|vdl2)"
+    return False, f"invalid mode {mode!r} (p25|atc|acars|vdl2)"
 
 
 # Minimal human UI served at "/" (ems.rg2.io): live EMS caption + recent
@@ -278,7 +282,7 @@ audio{width:100%;height:40px}
 </header>
 <div class="wrap"><div class="tuner">
 <div class="modebar">
-<button class="modebtn" id="m-noaa">NOAA<span class="sub">default <span class="livedot"></span></span></button>
+<button class="modebtn" id="m-noaa">NOAA<span class="sub">weather radio</span></button>
 <button class="modebtn" id="m-p25">P25<span class="sub">trunk <span class="livedot"></span></span></button>
 <button class="modebtn" id="m-atc">ATC<span class="sub">airband <span class="livedot"></span></span></button>
 <button class="modebtn" id="m-acars">ACARS<span class="sub">datalink <span class="livedot"></span></span></button>
@@ -286,7 +290,7 @@ audio{width:100%;height:40px}
 </div>
 <div class="switching" id="switching"></div>
 <div class="panel" id="p-noaa">
-<div class="simple-lcd"><div class="big">NOAA Weather Radio</div><div class="sub">162.550 MHz &middot; 24/7 default</div></div>
+<div class="simple-lcd"><div class="big">NOAA Weather Radio</div><div class="sub">162.550 MHz &middot; dedicated receiver</div></div>
 <audio id="noaaaudio" controls preload="none" src="https://icecast.rg2.io/wx.mp3"></audio>
 </div>
 <div class="panel" id="p-p25">
@@ -314,7 +318,7 @@ audio{width:100%;height:40px}
 <div class="lcd-freq" id="freq">---.---<span class="unit">MHz</span></div>
 <div class="lcd-call" id="call">Airband / FM monitor &middot; pick a preset or direct-tune</div>
 </div>
-<div><div class="presets-label">Presets &mdash; click to monitor (preempts NOAA)</div>
+<div><div class="presets-label">Presets &mdash; click to monitor</div>
 <div class="presets" id="presets"></div></div>
 <div class="controls">
 <div class="ctrl-left"><button class="btn danger" id="stop" disabled>&#9632; Stop</button>
@@ -326,7 +330,7 @@ audio{width:100%;height:40px}
 <div class="sq-row"><span class="sq-label">SQ</span>
 <input type="range" id="sq" min="0" max="150" value="0" style="width:120px">
 <span class="sq-val" id="sqval">OFF</span><span class="sq-hint">re-tune to apply</span></div>
-<div class="note">Tuning ATC/airband preempts NOAA (the 24/7 default) and auto-returns after 30 min.</div>
+<div class="note">Tuning ATC/airband takes the shared discone tuner and holds it until you switch modes. Stop returns the discone to idle.</div>
 </div>
 <div class="status-bar" id="status"></div>
 <div class="footer"><a href="/transcript">transcript log</a></div>
@@ -360,7 +364,7 @@ function setView(m){view=m;
  ['noaa','p25','atc','acars','vdl2'].forEach(function(k){$('p-'+k).classList.toggle('show',k===m);$('m-'+k).classList.toggle('sel',k===m)})}
 function clickMode(m){
  setView(m);
- if(m==='atc')return;                         // ATC switches the R2 on tune
+ if(m==='atc'||m==='noaa')return;             // ATC tunes on demand; NOAA is a dedicated receiver (no discone switch)
  if(activeMode!==m){pending=m;pendingSince=Date.now();
   setSwitching('Switching to '+m.toUpperCase()+'… ~15s (takes the shared tuner)');
   fetch('/api/r2/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}).catch(function(){})}}
@@ -731,7 +735,7 @@ class Handler(BaseHTTPRequestHandler):
                 "endpoints": ["/api/status", "/api/calls?limit=N",
                               "/api/transcribe", "/api/transcript?date=&limit=N",
                               "/api/source/moswin", "/api/monitor/squelch",
-                              "/api/r2/state", "/api/r2/mode (POST {mode:noaa|p25})"],
+                              "/api/r2/state", "/api/r2/mode (POST {mode:p25|atc|acars|vdl2})"],
                 "audio": "https://icecast.rg2.io/ems.mp3",
                 "console": "https://scanner.rg2.io/",
                 "ui": "/",
@@ -790,7 +794,7 @@ class Handler(BaseHTTPRequestHandler):
                 mode = str(d.get("mode", ""))
                 freq = parse_freq(d["freq"]) if d.get("freq") else None
             except (ValueError, TypeError, KeyError):
-                self._send(400, {"error": "mode required (noaa|p25|atc); atc needs freq"})
+                self._send(400, {"error": "mode required (p25|atc|acars|vdl2); atc needs freq"})
                 return
             ok, msg = r2_set_mode(mode, freq, str(d.get("audio_mode", "am")),
                                   float(d.get("squelch", 0) or 0))
