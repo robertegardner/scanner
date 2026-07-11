@@ -164,7 +164,9 @@ def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
     if mode == "atc":
         if not freq:
             return False, "atc requires freq"
-        gains = "LNA:13,MIX:12,VGA:13" if audio_mode == "nfm" else "LNA:14,MIX:13,VGA:14"
+        # LaNA (+~20dB) inline on the discone 2026-07-11 — cut from the old
+        # passive-discone values (nfm 13/12/13, am 14/13/14) to avoid overload.
+        gains = "LNA:4,MIX:9,VGA:10" if audio_mode == "nfm" else "LNA:4,MIX:10,VGA:11"
         sq = round(max(0.0, squelch) / 150.0 * 0.03, 4) if squelch else 0.0
         try:
             with open(MONITOR_ENV, "w") as f:
