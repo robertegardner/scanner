@@ -167,11 +167,16 @@ def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
         # LaNA (+~20dB) inline on the discone 2026-07-11 — cut from the old
         # passive-discone values (nfm 13/12/13, am 14/13/14) to avoid overload.
         gains = "LNA:4,MIX:9,VGA:10" if audio_mode == "nfm" else "LNA:4,MIX:10,VGA:11"
+        # slider 0-150 -> dB above the tracked noise floor (adaptive squelch in
+        # monitor_stream). MON_SQUELCH (absolute) kept as rollback fallback for
+        # an older monitor_stream; the adaptive var wins when both are set.
         sq = round(max(0.0, squelch) / 150.0 * 0.03, 4) if squelch else 0.0
+        sq_db = round(max(0.0, squelch) / 150.0 * 18.0, 1) if squelch else 0.0
         try:
             with open(MONITOR_ENV, "w") as f:
                 f.write(f"MON_FREQ={int(freq)}\nMON_MODE={audio_mode}\n"
-                        f"MON_GAINS={gains}\nMON_SQUELCH={sq}\n")
+                        f"MON_GAINS={gains}\nMON_SQUELCH={sq}\n"
+                        f"MON_SQUELCH_DB={sq_db}\n")
         except Exception as e:  # noqa: BLE001
             return False, str(e)
         subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", "atc"])
@@ -464,7 +469,7 @@ $('dtfreq').addEventListener('keydown',function(e){if(e.key==='Enter')commitDire
 $('tunemodal').addEventListener('click',function(e){if(e.target.id==='tunemodal')$('tunemodal').classList.remove('show')});
 $('vol').addEventListener('input',function(e){audio.volume=e.target.value/100;localStorage.setItem('mon.vol',e.target.value);
  $('volicon').innerHTML=e.target.value==0?'&#128263;':e.target.value<50?'&#128264;':'&#128266;'});
-$('sq').addEventListener('input',function(e){var v=parseInt(e.target.value);$('sqval').textContent=v===0?'OFF':v;localStorage.setItem('mon.sq',v)});
+$('sq').addEventListener('input',function(e){var v=parseInt(e.target.value);$('sqval').textContent=v===0?'OFF':(v/150*18).toFixed(1)+'dB';localStorage.setItem('mon.sq',v)});
 var sv=localStorage.getItem('mon.vol');if(sv!=null){$('vol').value=sv;$('vol').dispatchEvent(new Event('input'))}
 var ss=localStorage.getItem('mon.sq');if(ss!=null){$('sq').value=ss;$('sq').dispatchEvent(new Event('input'))}
 function pollR2(){fetch('/api/r2/state',{cache:'no-store'}).then(function(r){return r.json()}).then(applyR2).catch(function(){})}
