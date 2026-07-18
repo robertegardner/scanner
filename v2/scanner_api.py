@@ -172,6 +172,12 @@ def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
         # an older monitor_stream; the adaptive var wins when both are set.
         sq = round(max(0.0, squelch) / 150.0 * 0.03, 4) if squelch else 0.0
         sq_db = round(max(0.0, squelch) / 150.0 * 18.0, 1) if squelch else 0.0
+        # NWR (162.400-162.550) is a CONTINUOUS carrier: the adaptive floor
+        # tracker would absorb it within its 30 s window and close the gate
+        # mid-broadcast. Squelch is meaningless on an always-on carrier —
+        # force it off regardless of the slider.
+        if 162_400_000 <= int(freq) <= 162_550_000:
+            sq = sq_db = 0.0
         try:
             with open(MONITOR_ENV, "w") as f:
                 f.write(f"MON_FREQ={int(freq)}\nMON_MODE={audio_mode}\n"
