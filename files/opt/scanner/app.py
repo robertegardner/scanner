@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 import requests
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import (Flask, abort, has_request_context, jsonify, render_template,
+                   request, send_file)
 
 app = Flask(__name__)
 
@@ -61,9 +62,23 @@ def _moswin_categories() -> list[dict]:
     return cats
 
 
+# Headers the scanner-api write guard decides on (platform spec
+# 2026-10-01-radio-authentik-access). Without them a proxied POST reaches .83
+# with no X-Real-IP and is trusted as a direct LAN call — an off-LAN family
+# user on p25.rg2.io could retune the discone.
+_IDENTITY_HEADERS = ("X-Real-IP", "X-authentik-username", "X-authentik-groups")
+
+
+def _identity_headers() -> dict:
+    if not has_request_context():
+        return {}
+    return {h: request.headers[h] for h in _IDENTITY_HEADERS if request.headers.get(h)}
+
+
 def _sched(path: str, method: str = "GET", json: dict | None = None) -> dict | list:
     try:
-        resp = requests.request(method, SCHEDULER_URL + path, json=json, timeout=3)
+        resp = requests.request(method, SCHEDULER_URL + path, json=json, timeout=3,
+                                headers=_identity_headers())
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as e:
