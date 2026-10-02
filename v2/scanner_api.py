@@ -4,7 +4,8 @@
 Serves the Android app's (and any other V1 client's) scanner REST contract,
 fed by op25's http terminal. Stdlib only — no Flask, no requests.
 
-  GET  /api/status            {"current": {...}|null, "sdr_owner", "upcoming_passes": []}
+  GET  /api/status            {"current": {...}|null, "call": {tgid,talkgroup,radio}|null,
+                              "sdr_owner", "upcoming_passes": []}
   GET  /api/calls?limit=N     bare list of call EVENTS (no recordings yet — all
                               file fields null; the app renders rows, taps no-op)
   GET  /api/transcribe        latest live caption {text,source,context,updated}
@@ -28,6 +29,7 @@ Config via environment (systemd EnvironmentFile=/etc/scanner-compute/scanner-api
   EVENTS_PATH        default /var/lib/scanner-compute/call-events.jsonl
 """
 import glob
+import http.client
 import ipaddress
 import json
 import os
@@ -46,6 +48,11 @@ OP25_URL    = os.environ.get("OP25_TERMINAL_URL", "http://127.0.0.1:8080")
 API_PORT    = int(os.environ.get("API_PORT", "8081"))
 TGID_TAGS   = os.environ.get("TGID_TAGS", "/opt/scanner-compute/moswin-tgid-tags.tsv")
 EVENTS_PATH = os.environ.get("EVENTS_PATH", "/var/lib/scanner-compute/call-events.jsonl")
+ARCHIVE_URL = os.environ.get("ARCHIVE_URL", "http://127.0.0.1:8083")
+
+
+def _is_archive_path(path):
+    return path == "/archive" or path.startswith("/archive/") or path.startswith("/api/archive/")
 # EMS transcription output (written by scanner-transcribe on this host). Defaults
 # match its transcribe.env so the bridge surfaces captions with no extra config.
 TRANSCRIPTS_DIR       = os.environ.get("TRANSCRIPTS_DIR", "/var/lib/scanner-compute/transcripts")
@@ -115,7 +122,7 @@ def monitor_state():
     return st
 
 
-def monitor_tune(freq, mode, squelch):
+def monitor_tune(freq, mode, squelch, latch=False, hold_until=0):
     """ATC/airband tune — routes through the R2-mode coordinator (so it stops all
     R2 users + bounces the source fresh, not just restarts monitor.service). The
     coordinator owns the single-tuner R2. -> (ok, message)."""
@@ -124,7 +131,7 @@ def monitor_tune(freq, mode, squelch):
     mode = {"fm": "nfm", "nfm": "nfm", "am": "am"}.get(mode, "")
     if not mode:
         return False, "mode must be nfm or am"
-    return r2_set_mode("atc", freq, mode, squelch)
+    return r2_set_mode("atc", freq, mode, squelch, latch, hold_until)
 
 
 def monitor_stop():
@@ -138,8 +145,10 @@ def monitor_stop():
 # ---- R2-mode coordinator (Phase 4): the discone/R2 is single-tuner, so its modes
 # are mutually exclusive. r2-mode.sh is the single authority — it stops all R2
 # users, bounces the Pi source fresh (it degrades on client switches), and starts
-# the requested mode. NOAA is NO LONGER a discone mode (dedicated HF+ receiver);
-# the R2 rests on the last-used mode and never auto-returns.
+# the requested mode. NOAA is NO LONGER a discone mode (dedicated HF+ receiver).
+# P25 is the default: platform r2-return.timer returns the discone to P25 30 min
+# after any other mode unless the switch was latched (r2-latch.json, written here
+# before r2-mode.sh runs).
 R2_UNITS = [("p25", "op25-ems.service"),
             ("atc", "monitor.service"), ("acars", "acars-on-r2.service"), ("vdl2", "vdl2-on-r2.service")]
 
@@ -149,17 +158,62 @@ def _unit_active(unit):
                           capture_output=True, text=True).stdout.strip() == "active"
 
 
+R2_STATE_DIR = os.environ.get("R2_STATE_DIR", "/var/lib/scanner-compute")
+R2_RETURN_AFTER_SEC = int(os.environ.get("R2_RETURN_AFTER_SEC", "1800"))
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_latch(mode, latch, hold_until):
+    """r2-latch.json tells r2-return.sh to leave `mode` alone (latched) or until
+    hold_until. P25 or a plain switch removes it."""
+    path = os.path.join(R2_STATE_DIR, "r2-latch.json")
+    if mode == "p25" or not (latch or hold_until):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"mode": mode, "latched": bool(latch), "hold_until": float(hold_until or 0)}, f)
+    os.replace(tmp, path)
+
+
 def r2_state():
-    for mode, unit in R2_UNITS:
-        if _unit_active(unit):
-            return {"mode": mode, "unit": unit}
-    return {"mode": "idle", "unit": None}
+    mode, unit = "idle", None
+    for m, u in R2_UNITS:
+        if _unit_active(u):
+            mode, unit = m, u
+            break
+    st = _read_json(os.path.join(R2_STATE_DIR, "r2-state.json"))
+    latch = _read_json(os.path.join(R2_STATE_DIR, "r2-latch.json"))
+    if latch.get("mode") != mode:
+        latch = {}
+    latched = bool(latch.get("latched"))
+    hold_until = float(latch.get("hold_until") or 0)
+    returns_at = None
+    if mode not in ("p25", "idle") and not latched:
+        since = float(st.get("since") or 0) if st.get("mode") == mode else time.time()
+        returns_at = max(since + R2_RETURN_AFTER_SEC, hold_until)
+    return {"mode": mode, "unit": unit, "latched": latched,
+            "hold_until": hold_until or None, "returns_at": returns_at}
 
 
-def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
+def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0, latch=False, hold_until=0):
     # r2-mode.sh takes ~15s (stop-all + Pi source bounce + start) and op25's CC
     # lock takes longer still — fire-and-forget; the GUI polls /api/r2/state.
     if mode in ("p25", "acars", "vdl2"):
+        try:
+            _write_latch(mode, latch, hold_until)
+        except OSError as e:
+            return False, f"latch write failed: {e}"
         subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", mode])
         return True, f"switching R2 -> {mode}"
     if mode == "atc":
@@ -186,6 +240,10 @@ def r2_set_mode(mode, freq=None, audio_mode="am", squelch=0.0):
                         f"MON_SQUELCH_DB={sq_db}\n")
         except Exception as e:  # noqa: BLE001
             return False, str(e)
+        try:
+            _write_latch("atc", latch, hold_until)
+        except OSError as e:
+            return False, f"latch write failed: {e}"
         subprocess.Popen(["sudo", "/opt/scanner-compute/r2-mode.sh", "atc"])
         return True, f"switching R2 -> atc {int(freq)}"
     return False, f"invalid mode {mode!r} (p25|atc|acars|vdl2)"
@@ -289,10 +347,12 @@ audio{width:100%;height:40px}
 .xs-line .xt{color:var(--text)}
 .xs-line.live .xt{color:var(--amber);font-style:italic}
 .xs-empty{color:var(--text-faint);text-align:center;padding:1rem;font-size:.8rem}
+.latch{display:flex;gap:.4rem;align-items:center;font-size:.75rem;color:var(--text-dim);margin:.45rem 0 0}
+.r2note{font-size:.75rem;color:var(--amber);min-height:1em;margin-top:.2rem}
 </style></head><body>
 <header>
 <h1>Scanner</h1><span class="hsub">discone &middot; single tuner</span>
-<nav><a href="https://p25.rg2.io/">archive</a> &nbsp; <a href="https://wx.rg2.io/">weather</a></nav>
+<nav><a href="/archive">archive</a> &nbsp; <a href="https://wx.rg2.io/">weather</a></nav>
 </header>
 <div class="wrap"><div class="tuner">
 <div class="modebar">
@@ -302,6 +362,8 @@ audio{width:100%;height:40px}
 <button class="modebtn" id="m-acars">ACARS<span class="sub">datalink <span class="livedot"></span></span></button>
 <button class="modebtn" id="m-vdl2">VDL2<span class="sub">datalink <span class="livedot"></span></span></button>
 </div>
+<label class="latch"><input type="checkbox" id="latch"> &#128274; latch &mdash; stay on the mode I pick (no auto-return to P25)</label>
+<div class="r2note" id="r2note"></div>
 <div class="switching" id="switching"></div>
 <div class="panel" id="p-noaa">
 <div class="simple-lcd"><div class="big">NOAA Weather Radio</div><div class="sub">162.550 MHz &middot; dedicated receiver</div></div>
@@ -312,7 +374,7 @@ audio{width:100%;height:40px}
 <audio id="p25audio" controls preload="none"></audio>
 <div class="xscript-wrap">
 <div class="xscript-bar"><span>live transcript &middot; MOSWIN P25</span>
-<span><a href="/transcript" target="_blank" rel="noopener">full log &#8599;</a> &nbsp; <a href="https://scanner.rg2.io/" target="_blank" rel="noopener">op25 console &#8599;</a></span></div>
+<span><a href="/archive">archive &amp; timeline</a> &nbsp; <a href="/transcript" target="_blank" rel="noopener">full log &#8599;</a> &nbsp; <a href="https://scanner.rg2.io/" target="_blank" rel="noopener">op25 console &#8599;</a></span></div>
 <div class="xscript" id="xscript"><div class="xs-empty">waiting for transcript&hellip;</div></div></div>
 </div>
 <div class="panel" id="p-acars">
@@ -381,14 +443,17 @@ function clickMode(m){
  if(m==='atc'||m==='noaa')return;             // ATC tunes on demand; NOAA is a dedicated receiver (no discone switch)
  if(activeMode!==m){pending=m;pendingSince=Date.now();
   setSwitching('Switching to '+m.toUpperCase()+'… ~15s (takes the shared tuner)');
-  fetch('/api/r2/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})}).catch(function(){})}}
+  fetch('/api/r2/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m,latch:m!=='p25'&&$('latch').checked})}).catch(function(){})}}
 function applyR2(d){
  activeMode=d.mode||'idle';
  ['noaa','p25','atc','acars','vdl2'].forEach(function(k){$('m-'+k).classList.toggle('live',k===activeMode)});
  if(pending){if(activeMode===pending){pending=null;setSwitching('')}
   else if(Date.now()-pendingSince>30000){pending=null;setSwitching('')}}
  if(view===null)setView(activeMode==='idle'?'noaa':activeMode);
- if(activeMode==='p25'){var pa=$('p25audio');if(!pa.getAttribute('src'))pa.src=ICE+'/ems.mp3'}}
+ if(activeMode==='p25'){var pa=$('p25audio');if(!pa.getAttribute('src'))pa.src=ICE+'/ems.mp3'}
+ var n=$('r2note');if(n){if(d.latched)n.textContent=activeMode.toUpperCase()+' · 🔒 latched';
+  else if(d.returns_at){var mins=Math.max(0,Math.round((d.returns_at*1000-Date.now())/60000));n.textContent=activeMode.toUpperCase()+' · back to P25 in '+mins+' min'}
+  else n.textContent=''}}
 // ---- P25 talkgroup + captions ----
 function pollStatus(){fetch('/api/status',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){
  var c=s.current;
@@ -435,7 +500,7 @@ function tune(freq,mode,label){
  setSwitching('Switching to ATC… ~15s (takes the shared tuner)');
  setStatus('Tuning '+fmtMHz(freq)+' '+modeLabel(mode)+'…');setLed('amber');if(isPlaying)pauseATC();
  var sq=parseInt($('sq').value)||0;
- fetch('/api/monitor/tune',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({freq:freq,mode:mode,squelch:sq})})
+ fetch('/api/monitor/tune',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({freq:freq,mode:mode,squelch:sq,latch:$('latch').checked})})
   .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(res){
    if(!res.ok)throw new Error(res.j.error||res.j.msg||'tune failed');
    active=freq;lcd(freq,mode,label);renderPresets();$('stop').disabled=false;
@@ -644,12 +709,17 @@ def status_payload() -> dict:
     with STATE.lock:
         fresh = (time.monotonic() - STATE.last_trunk) < STALE_S and STATE.last_trunk > 0
         if not fresh:
-            return {"current": None, "sdr_owner": "op25", "upcoming_passes": []}
+            return {"current": None, "call": None, "sdr_owner": "op25", "upcoming_passes": []}
         if STATE.open_call:
             detail = f"active: {STATE.open_call['talkgroup']}"
         else:
             detail = "monitoring control channel"
-        return {"current": {"name": "ems_scanner", "detail": detail},
+        # `call` only while op25 is actually on a voice channel: open_call lingers
+        # ~CALL_CLOSE_S after op25 returns to control (cur_tgid None), and
+        # p25-recorder would stamp that stale talkgroup onto the next call.
+        call = ({k: STATE.open_call.get(k) for k in ("tgid", "talkgroup", "radio")}
+                if STATE.open_call and STATE.cur_tgid is not None else None)
+        return {"current": {"name": "ems_scanner", "detail": detail}, "call": call,
                 "sdr_owner": "op25", "upcoming_passes": []}
 
 
@@ -774,10 +844,49 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # journal noise control
         pass
 
+    def _proxy_archive(self, method, body=b""):
+        """Stream a request through to p25-archive (127.0.0.1:8083). The write
+        guard has already run in do_POST/do_DELETE."""
+        u = urlparse(ARCHIVE_URL)
+        conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=30)
+        hdrs = {k: self.headers[k] for k in ("Range", "Content-Type") if self.headers.get(k)}
+        try:
+            conn.request(method, self.path, body=body or None, headers=hdrs)
+            r = conn.getresponse()
+        except OSError as e:
+            conn.close()
+            return self._send(502, {"error": f"archive unavailable: {e}"})
+        try:
+            self.send_response(r.status)
+            for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges",
+                      "Cache-Control"):
+                v = r.getheader(k)
+                if v:
+                    self.send_header(k, v)
+            self.end_headers()
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            conn.close()
+
+    def do_DELETE(self):
+        if is_forbidden_write("DELETE", self.headers):
+            return self._send(403, {"ok": False, "error": "admin required"})
+        if _is_archive_path(urlparse(self.path).path):
+            return self._proxy_archive("DELETE")
+        self._send(404, {"error": "not found"})
+
     def do_GET(self):
         url = urlparse(self.path)
         if url.path == "/api/whoami":
             return self._send(200, auth_context(self.headers))
+        if _is_archive_path(url.path):
+            return self._proxy_archive("GET")
         if url.path == "/":
             self._send_html(200, CAPTIONS_HTML)
         elif url.path == "/api":
@@ -786,7 +895,8 @@ class Handler(BaseHTTPRequestHandler):
                 "endpoints": ["/api/status", "/api/calls?limit=N",
                               "/api/transcribe", "/api/transcript?date=&limit=N",
                               "/api/source/moswin", "/api/monitor/squelch",
-                              "/api/r2/state", "/api/r2/mode (POST {mode:p25|atc|acars|vdl2})"],
+                              "/api/r2/state", "/api/r2/mode (POST {mode:p25|atc|acars|vdl2, latch?, hold_until?})",
+                              "/archive"],
                 "audio": "https://icecast.rg2.io/ems.mp3",
                 "console": "https://scanner.rg2.io/",
                 "ui": "/",
@@ -821,6 +931,9 @@ class Handler(BaseHTTPRequestHandler):
             if length:
                 self.rfile.read(length)
             return self._send(403, {"ok": False, "error": "admin required"})
+        if _is_archive_path(urlparse(self.path).path):
+            length = int(self.headers.get("Content-Length") or 0)
+            return self._proxy_archive("POST", self.rfile.read(length) if length else b"")
         url = urlparse(self.path)
         # read the body (needed for ATC start; drained otherwise for keep-alive)
         length = int(self.headers.get("Content-Length") or 0)
@@ -835,7 +948,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "freq required (e.g. 162.550M or Hz)"})
                 return
             ok, msg = monitor_tune(freq, str(d.get("mode", "nfm")),
-                                   float(d.get("squelch", 0) or 0))
+                                   float(d.get("squelch", 0) or 0),
+                                   bool(d.get("latch")), float(d.get("hold_until") or 0))
             st = monitor_state()
             st["msg"] = msg
             self._send(200 if ok else 400, st)
@@ -853,7 +967,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "mode required (p25|atc|acars|vdl2); atc needs freq"})
                 return
             ok, msg = r2_set_mode(mode, freq, str(d.get("audio_mode", "am")),
-                                  float(d.get("squelch", 0) or 0))
+                                  float(d.get("squelch", 0) or 0),
+                                  bool(d.get("latch")), float(d.get("hold_until") or 0))
             self._send(200 if ok else 400, {"ok": ok, "msg": msg, **r2_state()})
         else:
             self._send(404, {"error": "not found"})
