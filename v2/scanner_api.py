@@ -714,8 +714,11 @@ def status_payload() -> dict:
             detail = f"active: {STATE.open_call['talkgroup']}"
         else:
             detail = "monitoring control channel"
+        # `call` only while op25 is actually on a voice channel: open_call lingers
+        # ~CALL_CLOSE_S after op25 returns to control (cur_tgid None), and
+        # p25-recorder would stamp that stale talkgroup onto the next call.
         call = ({k: STATE.open_call.get(k) for k in ("tgid", "talkgroup", "radio")}
-                if STATE.open_call else None)
+                if STATE.open_call and STATE.cur_tgid is not None else None)
         return {"current": {"name": "ems_scanner", "detail": detail}, "call": call,
                 "sdr_owner": "op25", "upcoming_passes": []}
 
