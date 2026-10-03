@@ -459,7 +459,7 @@ function pollStatus(){fetch('/api/status',{cache:'no-store'}).then(function(r){r
  var c=s.current;
  if(c&&c.detail){if(c.detail.indexOf('active:')===0){var k=s.call;
    if(k&&k.tgid){$('p25tg').innerHTML='<a href="/archive/talkgroups#tg='+encodeURIComponent(k.tgid)+'">'+esc(k.talkgroup||('TG '+k.tgid))+'</a>'+
-     (k.label_source&&k.label_source!=='user'?' <span style="font-size:.7rem;border:1px solid #555;border-radius:4px;padding:0 .3rem;color:#aaa">'+esc(k.label_source)+'</span>':'')}
+     (k.label_source&&k.label_source!=='user'&&k.label_source!=='none'?' <span style="font-size:.7rem;border:1px solid #555;border-radius:4px;padding:0 .3rem;color:#aaa">'+esc(k.label_source)+'</span>':'')}
    else $('p25tg').textContent=c.detail.replace('active:','').trim()||'MOSWIN P25';
    $('p25sub').textContent='call in progress'}
   else{$('p25tg').textContent='MOSWIN P25';$('p25sub').textContent='monitoring control channel'}}
@@ -578,7 +578,8 @@ class TagFile:
 
     def _maybe_reload(self):
         try:
-            m = os.stat(self.path).st_mtime_ns
+            st = os.stat(self.path)
+            m = (st.st_mtime_ns, st.st_ino, st.st_size)
         except OSError:
             self._mtime, self._tags = None, {}
             return
@@ -586,7 +587,7 @@ class TagFile:
             return
         tags = {}
         try:
-            with open(self.path, encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.rstrip("\n")
                     if not line.strip() or line.startswith("#"):
@@ -595,9 +596,9 @@ class TagFile:
                     if len(parts) >= 2 and parts[0].strip().isdigit():
                         src = parts[2].strip() if len(parts) >= 3 and parts[2].strip() else "user"
                         tags[parts[0].strip()] = (parts[1].strip(), src)
-        except OSError as e:
+        except (OSError, ValueError) as e:
             log(f"tags: could not read {self.path}: {e}")
-            return
+            return  # keep old labels; key not advanced so we retry
         self._tags, self._mtime = tags, m
         log(f"tags: loaded {len(tags)} label(s) from {self.path}")
 
@@ -608,6 +609,7 @@ class TagFile:
 
 
 TAGS = TagFile(TGID_TAGS)
+_tags_err_logged = False
 
 
 class State:
@@ -653,7 +655,14 @@ class State:
 
     def label_for(self, tgid):
         """(label, source): published TSV > op25's tag (frozen at op25 start) > raw."""
-        hit = TAGS.get(tgid)
+        try:
+            hit = TAGS.get(tgid)
+        except Exception as e:
+            global _tags_err_logged
+            if not _tags_err_logged:
+                _tags_err_logged = True
+                log(f"tags: lookup failed: {e.__class__.__name__}: {e}")
+            hit = None
         if hit:
             return hit
         if self.cur_tag:
@@ -669,7 +678,7 @@ class State:
             "label_source": src,
             "tgid": str(tgid),
             "radio": str(self.cur_srcaddr) if self.cur_srcaddr else None,
-            "encrypted": self.cur_encrypted,
+            "encrypted": None,  # filled by on_tgid from polls AFTER open (op25 resets per call)
             "filename": None, "path": None, "size_kb": None, "transcript": None,
             "_last_seen": time.monotonic(),
         }
@@ -692,8 +701,10 @@ class State:
                 self.open_call["_last_seen"] = now
                 if self.cur_srcaddr and not self.open_call["radio"]:
                     self.open_call["radio"] = str(self.cur_srcaddr)
-                if self.cur_encrypted is not None and self.open_call.get("encrypted") is None:
-                    self.open_call["encrypted"] = self.cur_encrypted
+                if self.cur_encrypted is True:
+                    self.open_call["encrypted"] = True
+                elif self.cur_encrypted is False and self.open_call.get("encrypted") is None:
+                    self.open_call["encrypted"] = False
             else:
                 self.close_event()
                 self.open_event(tgid)
@@ -740,7 +751,10 @@ def poll_op25_once():
                     STATE.cur_encrypted = enc
             elif jt == "change_freq":
                 # event message: arrives on retune; tgid None = back on control
-                STATE.cur_tgid = m.get("tgid")
+                new_tgid = m.get("tgid")
+                if new_tgid != STATE.cur_tgid:
+                    STATE.cur_encrypted = None  # new call: drop previous call's flag
+                STATE.cur_tgid = new_tgid
                 STATE.cur_tag = m.get("tag") or None
                 if STATE.cur_tgid is None:
                     STATE.cur_srcaddr = None
