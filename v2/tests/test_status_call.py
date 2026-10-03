@@ -20,7 +20,8 @@ class StatusCallTest(unittest.TestCase):
         sa.STATE.open_call = {"tgid": "4229", "talkgroup": "Jackson PD (Police)", "radio": "87198",
                               "ts": "x", "_private": 1}
         self.assertEqual(sa.status_payload()["call"],
-                         {"tgid": "4229", "talkgroup": "Jackson PD (Police)", "radio": "87198"})
+                         {"tgid": "4229", "talkgroup": "Jackson PD (Police)", "radio": "87198",
+                          "label_source": None, "encrypted": None})
 
     def test_no_call_is_null(self):
         sa.STATE.last_trunk = time.monotonic()

@@ -32,6 +32,15 @@ class Upstream(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"abcd")
             return
+        if self.path.startswith("/api/archive/talkgroups.csv"):
+            data = b"tgid,label\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv")
+            self.send_header("Content-Disposition", 'attachment; filename="x.csv"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         data = json.dumps({"ok": True, "path": self.path}).encode()
         self.send_response(201 if self.command == "POST" else 200)
         self.send_header("Content-Type", "application/json")
@@ -110,6 +119,11 @@ class ProxyTest(unittest.TestCase):
             self.assertEqual(self.req("GET", "/api/archive/calls")[0], 502)
         finally:
             sa.ARCHIVE_URL = saved
+
+    def test_content_disposition_forwarded(self):
+        code, h, body = self.req("GET", "/api/archive/talkgroups.csv")
+        self.assertEqual(code, 200)
+        self.assertEqual(h.get("Content-Disposition"), 'attachment; filename="x.csv"')
 
     def test_non_archive_paths_untouched(self):
         self.assertEqual(self.req("GET", "/api/nope")[0], 404)

@@ -457,7 +457,11 @@ function applyR2(d){
 // ---- P25 talkgroup + captions ----
 function pollStatus(){fetch('/api/status',{cache:'no-store'}).then(function(r){return r.json()}).then(function(s){
  var c=s.current;
- if(c&&c.detail){if(c.detail.indexOf('active:')===0){$('p25tg').textContent=c.detail.replace('active:','').trim()||'MOSWIN P25';$('p25sub').textContent='call in progress'}
+ if(c&&c.detail){if(c.detail.indexOf('active:')===0){var k=s.call;
+   if(k&&k.tgid){$('p25tg').innerHTML='<a href="/archive/talkgroups#tg='+encodeURIComponent(k.tgid)+'">'+esc(k.talkgroup||('TG '+k.tgid))+'</a>'+
+     (k.label_source&&k.label_source!=='user'?' <span style="font-size:.7rem;border:1px solid #555;border-radius:4px;padding:0 .3rem;color:#aaa">'+esc(k.label_source)+'</span>':'')}
+   else $('p25tg').textContent=c.detail.replace('active:','').trim()||'MOSWIN P25';
+   $('p25sub').textContent='call in progress'}
   else{$('p25tg').textContent='MOSWIN P25';$('p25sub').textContent='monitoring control channel'}}
  else{$('p25tg').textContent='MOSWIN P25';$('p25sub').textContent=(activeMode==='p25'?'control channel locking…':'not active')}
 }).catch(function(){})}
@@ -563,21 +567,47 @@ def _int(val, default: int) -> int:
         return default
 
 
-def load_tags(path: str) -> dict:
-    """tgid -> label from the platform-provisioned TSV (tgid<TAB>label...)."""
-    tags = {}
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split("\t")
-                if len(parts) >= 2:
-                    tags[parts[0].strip()] = parts[1].strip()
-    except OSError as e:
-        log(f"tags: could not read {path}: {e}")
-    return tags
+class TagFile:
+    """tgid -> (label, source) from the TSV p25-archive publishes
+    (tgid<TAB>label[<TAB>source]); re-read whenever its mtime changes, so a
+    label saved at ems.rg2.io/archive/talkgroups shows on the next call."""
+
+    def __init__(self, path):
+        self.path, self._mtime, self._tags = path, None, {}
+        self._lock = threading.Lock()
+
+    def _maybe_reload(self):
+        try:
+            m = os.stat(self.path).st_mtime_ns
+        except OSError:
+            self._mtime, self._tags = None, {}
+            return
+        if m == self._mtime:
+            return
+        tags = {}
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.rstrip("\n")
+                    if not line.strip() or line.startswith("#"):
+                        continue
+                    parts = line.split("\t")
+                    if len(parts) >= 2 and parts[0].strip().isdigit():
+                        src = parts[2].strip() if len(parts) >= 3 and parts[2].strip() else "user"
+                        tags[parts[0].strip()] = (parts[1].strip(), src)
+        except OSError as e:
+            log(f"tags: could not read {self.path}: {e}")
+            return
+        self._tags, self._mtime = tags, m
+        log(f"tags: loaded {len(tags)} label(s) from {self.path}")
+
+    def get(self, tgid):
+        with self._lock:
+            self._maybe_reload()
+            return self._tags.get(str(tgid))
+
+
+TAGS = TagFile(TGID_TAGS)
 
 
 class State:
@@ -591,7 +621,7 @@ class State:
         self.cur_srcaddr = None        # str | None — from trunk_update srcaddr
         self.open_call = None          # dict | None
         self.events = deque(maxlen=EVENTS_MAX)
-        self.tags = load_tags(TGID_TAGS)
+        self.cur_encrypted = None      # bool | None — from trunk_update
 
     # -- event persistence ----------------------------------------------------
 
@@ -622,14 +652,24 @@ class State:
     # -- call-event tracking (caller holds the lock) ---------------------------
 
     def label_for(self, tgid):
-        return self.cur_tag or self.tags.get(str(tgid)) or f"TG {tgid}"
+        """(label, source): published TSV > op25's tag (frozen at op25 start) > raw."""
+        hit = TAGS.get(tgid)
+        if hit:
+            return hit
+        if self.cur_tag:
+            return self.cur_tag, "op25"
+        return f"TG {tgid}", "none"
 
     def open_event(self, tgid):
+        label, src = self.label_for(tgid)
         self.open_call = {
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "talkgroup": self.label_for(tgid),
+            "t": time.time(),
+            "talkgroup": label,
+            "label_source": src,
             "tgid": str(tgid),
             "radio": str(self.cur_srcaddr) if self.cur_srcaddr else None,
+            "encrypted": self.cur_encrypted,
             "filename": None, "path": None, "size_kb": None, "transcript": None,
             "_last_seen": time.monotonic(),
         }
@@ -652,6 +692,8 @@ class State:
                 self.open_call["_last_seen"] = now
                 if self.cur_srcaddr and not self.open_call["radio"]:
                     self.open_call["radio"] = str(self.cur_srcaddr)
+                if self.cur_encrypted is not None and self.open_call.get("encrypted") is None:
+                    self.open_call["encrypted"] = self.cur_encrypted
             else:
                 self.close_event()
                 self.open_event(tgid)
@@ -663,6 +705,16 @@ STATE = State()
 
 
 # -- op25 terminal poller ------------------------------------------------------
+
+def _encrypted_from(m):
+    v = m.get("encrypted")
+    if v is None:
+        return None
+    try:
+        return bool(int(v))
+    except (TypeError, ValueError):
+        return None
+
 
 def poll_op25_once():
     body = json.dumps([{"command": "update", "arg1": 0, "arg2": 0,
@@ -683,12 +735,16 @@ def poll_op25_once():
                 src = m.get("srcaddr")
                 if src:  # nonzero radio id of the active call
                     STATE.cur_srcaddr = src
+                enc = _encrypted_from(m)  # only trunk_update carries it (change_freq doesn't)
+                if enc is not None:
+                    STATE.cur_encrypted = enc
             elif jt == "change_freq":
                 # event message: arrives on retune; tgid None = back on control
                 STATE.cur_tgid = m.get("tgid")
                 STATE.cur_tag = m.get("tag") or None
                 if STATE.cur_tgid is None:
                     STATE.cur_srcaddr = None
+                    STATE.cur_encrypted = None
         STATE.on_tgid(STATE.cur_tgid)
 
 
@@ -717,7 +773,7 @@ def status_payload() -> dict:
         # `call` only while op25 is actually on a voice channel: open_call lingers
         # ~CALL_CLOSE_S after op25 returns to control (cur_tgid None), and
         # p25-recorder would stamp that stale talkgroup onto the next call.
-        call = ({k: STATE.open_call.get(k) for k in ("tgid", "talkgroup", "radio")}
+        call = ({k: STATE.open_call.get(k) for k in ("tgid", "talkgroup", "radio", "label_source", "encrypted")}
                 if STATE.open_call and STATE.cur_tgid is not None else None)
         return {"current": {"name": "ems_scanner", "detail": detail}, "call": call,
                 "sdr_owner": "op25", "upcoming_passes": []}
@@ -859,7 +915,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.send_response(r.status)
             for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges",
-                      "Cache-Control"):
+                      "Cache-Control", "Content-Disposition"):
                 v = r.getheader(k)
                 if v:
                     self.send_header(k, v)
