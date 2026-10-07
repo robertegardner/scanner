@@ -349,6 +349,19 @@ audio{width:100%;height:40px}
 .xs-empty{color:var(--text-faint);text-align:center;padding:1rem;font-size:.8rem}
 .latch{display:flex;gap:.4rem;align-items:center;font-size:.75rem;color:var(--text-dim);margin:.45rem 0 0}
 .r2note{font-size:.75rem;color:var(--amber);min-height:1em;margin-top:.2rem}
+[hidden]{display:none!important}
+.srcsw{display:flex;gap:.3rem}
+.srcsw button{flex:1;background:var(--bg-button);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:.45rem;font-size:.82rem;cursor:pointer}
+.srcsw button.sel{border-color:var(--amber);background:#2c2520}
+.fnow{font-size:.9rem;min-height:1.3em;color:var(--text)}
+.fbar{display:flex;justify-content:space-between;align-items:center;gap:.5rem;font-size:.78rem;color:var(--text-dim)}
+.fdrawer{border:1px solid var(--line);border-radius:10px;padding:.6rem;max-height:50vh;overflow:auto;display:flex;flex-direction:column;gap:.45rem}
+.fdef{display:flex;justify-content:space-between;align-items:center;font-size:.82rem}
+.fadd{display:flex;gap:.4rem}.fadd input{flex:1;background:var(--bg-raise);border:1px solid var(--line);border-radius:6px;color:var(--text);padding:.35rem .5rem}
+.fgh{display:flex;justify-content:space-between;align-items:center;text-transform:uppercase;font-size:.68rem;letter-spacing:.12em;color:var(--text-dim);margin-top:.35rem}
+.ftg{font-size:.85rem;padding:.15rem 0}.ftg.off{color:var(--text-faint)}.ftg .sub{color:var(--text-dim);font-size:.72rem}
+.btn.sm{min-height:0;min-width:0;padding:.2rem .45rem;font-size:.7rem}
+.xs-line.dim{opacity:.35}
 </style></head><body>
 <header>
 <h1>Scanner</h1><span class="hsub">discone &middot; single tuner</span>
@@ -371,7 +384,20 @@ audio{width:100%;height:40px}
 </div>
 <div class="panel" id="p-p25">
 <div class="simple-lcd"><div class="big" id="p25tg">MOSWIN P25</div><div class="sub" id="p25sub">trunk scanner</div></div>
+<div class="srcsw" id="p25src"><button id="src-live" class="sel">Live &middot; all talkgroups</button><button id="src-filt">Filtered</button></div>
 <audio id="p25audio" controls preload="none"></audio>
+<div id="fpanel" hidden>
+<div class="srcsw"><button id="fmode-calls" class="sel">call-by-call</button><button id="fmode-stream">stream (/ems-filtered.mp3)</button></div>
+<div class="fnow" id="fnow">press Listen &mdash; filtered calls play as they finish</div>
+<audio id="faudio" controls preload="none"></audio>
+<div class="fbar"><button class="btn primary" id="fplay">&#9654; Listen</button><span id="fstat"></span><button class="btn" id="fbtn">Filter</button></div>
+</div>
+<div class="fdrawer" id="fdrawer" hidden>
+<div class="fdef"><span>Unlisted talkgroups</span><span class="srcsw"><button data-def="play">play</button><button data-def="mute">mute</button></span></div>
+<div class="fadd"><input id="faddtg" inputmode="numeric" placeholder="talkgroup id"><button class="btn sm" id="faddbtn">+ add TG</button></div>
+<div class="note" id="fnote"></div>
+<div id="flist"></div>
+</div>
 <div class="xscript-wrap">
 <div class="xscript-bar"><span>live transcript &middot; MOSWIN P25</span>
 <span><a href="/archive">archive &amp; timeline</a> &nbsp; <a href="/transcript" target="_blank" rel="noopener">full log &#8599;</a> &nbsp; <a href="https://scanner.rg2.io/" target="_blank" rel="noopener">op25 console &#8599;</a></span></div>
@@ -426,7 +452,7 @@ var ATC_MOUNT=ICE+'/scanner-atc.mp3';
 var audio=$('audio');
 var presets=[], active=null, isPlaying=false, tuning=false;
 var activeMode='idle', view=null, pending=null, pendingSince=0;
-var allAudio=['noaaaudio','p25audio','audio'].map($).filter(Boolean);
+var allAudio=['noaaaudio','p25audio','faudio','audio'].map($).filter(Boolean);
 allAudio.forEach(function(a){a.addEventListener('play',function(){allAudio.forEach(function(b){if(b!==a)b.pause()})})});
 function esc(s){return String(s).replace(/[&<>]/g,function(m){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[m]})}
 function fmtMHz(hz){return (hz/1e6).toFixed(3)}
@@ -468,8 +494,8 @@ function pollStatus(){fetch('/api/status',{cache:'no-store'}).then(function(r){r
 var xsAtBottom=true;
 function renderXscript(entries,live){
  var box=$('xscript');if(!box)return;var html='';
- entries.slice().reverse().forEach(function(e){var t=(e.ts||'').slice(11,19);
-  html+='<div class="xs-line"><time>'+esc(t)+'</time><span class="xt">'+esc(e.text||'')+'</span></div>'});
+ entries.slice().reverse().forEach(function(e){var t=(e.ts||'').slice(11,19),dim=FLT&&e.tgid!=null&&!FQ.allows(FLT,e.tgid);
+  html+='<div class="xs-line'+(dim?' dim':'')+'"><time>'+esc(t)+'</time><span class="xt">'+esc(e.text||'')+'</span></div>'});
  if(live)html+='<div class="xs-line live"><time>now</time><span class="xt">'+esc(live)+'</span></div>';
  box.innerHTML=html||'<div class="xs-empty">waiting for transcript&hellip;</div>';
  if(xsAtBottom)box.scrollTop=box.scrollHeight}
@@ -481,6 +507,87 @@ function pollTranscript(){
    renderXscript(es,(fresh&&c.text!==newest)?c.text:'')
   }).catch(function(){renderXscript(es,'')})
  }).catch(function(){})}
+// ---- P25 filtered listening (shared server filter; spec 2026-10-07) ----
+/*FQ-BEGIN*/
+var FQ={
+ allows:function(f,tgid){var s=(f&&f.tg&&tgid!=null)?f.tg[String(tgid)]:null;return (s||(f&&f.default)||'play')==='play'},
+ label:function(f){if(!f)return 'Filter';var m=0,p=0,k;for(k in f.tg){if(f.tg[k]==='mute')m++;else p++}
+  return f.default==='mute'?'Filter · only '+p:(m?'Filter · '+m+' muted':'Filter · all')},
+ merge:function(queue,calls,seen,nowSec,maxLag){var q=queue.slice(),skipped=0;
+  calls.forEach(function(c){if(!seen[c.id]){seen[c.id]=1;q.push(c)}});
+  if(q.length>1&&nowSec-q[0].start_ts>maxLag){skipped=q.length-1;q=q.slice(-1)}
+  return {queue:q,skipped:skipped}},
+ groups:function(rows){var order=['fire','ems','police','interop','other'],by={};
+  rows.forEach(function(r){var g=order.indexOf(r.group)>=0?r.group:'other';(by[g]=by[g]||[]).push(r)});
+  return order.filter(function(g){return by[g]}).map(function(g){return {group:g,rows:by[g]}})},
+ setGroup:function(f,rows,state){var tg={},k;for(k in f.tg)tg[k]=f.tg[k];
+  rows.forEach(function(r){tg[String(r.tgid)]=state});return {default:f.default,tg:tg}}
+};
+/*FQ-END*/
+var FLT=null,fQueue=[],fSeen={},fAfter=null,fPlaying=null,fArmed=false,fSrc='live',fCanEdit=true,fSaveT=null,fGroups=[],fDirty=false,fMode='calls';
+function fltLoad(force){return fetch('/api/archive/filter',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(d){
+ if(fDirty&&!force)return;if(!d||typeof d.tg!=='object'||d.tg===null)return;
+ FLT=d;$('fbtn').textContent=FQ.label(d);if(!$('fdrawer').hidden)renderDrawer()}).catch(function(){})}
+function fAgo(ts){var s=Math.max(0,Date.now()/1000-ts);return s<90?Math.round(s)+'s ago':s<5400?Math.round(s/60)+'m ago':s<172800?Math.round(s/3600)+'h ago':Math.round(s/86400)+'d ago'}
+function fClock(ts){return new Date(ts*1000).toLocaleTimeString([],{hour12:false})}
+function fDur(s){s=Math.round(s||0);return Math.floor(s/60)+':'+('0'+s%60).slice(-2)}
+function fShowNow(){var c=fPlaying;
+ $('fnow').innerHTML=c?esc(c.label)+' <span class="sub">&middot; '+fClock(c.start_ts)+' &middot; '+fDur(c.duration)+'</span>':(fArmed?'listening &mdash; waiting for a filtered call&hellip;':'press Listen &mdash; filtered calls play as they finish');
+ $('fstat').textContent=fQueue.length?fQueue.length+' queued':''}
+function fNext(){var a=$('faudio');fPlaying=fArmed?(fQueue.shift()||null):null;fShowNow();if(!fPlaying)return;
+ a.src=fPlaying.url;var p=a.play();
+ if(p&&p.catch)p.catch(function(e){if(e&&e.name==='NotAllowedError'){fQueue.unshift(fPlaying);fPlaying=null;fArmed=false;$('fplay').innerHTML='&#9654; Listen';fShowNow()}})}
+function fPoll(){if(fSrc!=='filt'||fMode!=='calls')return;
+ fetch('/api/archive/live'+(fAfter==null?'':'?after='+fAfter),{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(d){
+  if(fSrc!=='filt'||fMode!=='calls')return;
+  fAfter=d.last_id;if(!fArmed){fShowNow();return}
+  var m=FQ.merge(fQueue,d.calls||[],fSeen,Date.now()/1000,120);fQueue=m.queue;
+  if(m.skipped)showToast('skipped '+m.skipped+' older call'+(m.skipped>1?'s':''));
+  if(!fPlaying)fNext();else fShowNow()}).catch(function(){$('fstat').textContent='archive unavailable — retrying'})}
+function setSrc(s){fSrc=s;try{localStorage.setItem('p25src',s)}catch(e){}
+ $('src-live').classList.toggle('sel',s==='live');$('src-filt').classList.toggle('sel',s==='filt');
+ $('p25audio').hidden=s!=='live';$('fpanel').hidden=s!=='filt';
+ if(s==='filt'){$('p25audio').pause();fltLoad();fPoll()}else{fArmed=false;fPlaying=null;fQueue=[];$('faudio').pause();$('fdrawer').hidden=true;$('fplay').innerHTML='&#9654; Listen'}}
+function setFMode(m){fMode=m;try{localStorage.setItem('p25fmode',m)}catch(e){}
+ $('fmode-calls').classList.toggle('sel',m==='calls');$('fmode-stream').classList.toggle('sel',m==='stream');
+ fArmed=false;fPlaying=null;fQueue=[];var a=$('faudio');a.pause();$('fplay').innerHTML='&#9654; Listen';
+ if(m==='stream'){a.src=ICE+'/ems-filtered.mp3';$('fplay').hidden=true;$('fstat').textContent='';$('fnow').textContent='server-filtered stream \u00b7 ~3 s behind live \u00b7 same URL works on speakers/apps'}
+ else{a.removeAttribute('src');a.load();$('fplay').hidden=false;fShowNow()}}
+$('fmode-calls').addEventListener('click',function(){setFMode('calls')});
+$('fmode-stream').addEventListener('click',function(){setFMode('stream')});
+function renderDrawer(){var f=FLT;if(!f)return;
+ Array.prototype.forEach.call(document.querySelectorAll('#fdrawer [data-def]'),function(b){b.classList.toggle('sel',b.dataset.def===f.default)});
+ $('fnote').textContent=fCanEdit?'':'view only — changing the filter needs admin sign-in';
+ fGroups=FQ.groups(f.talkgroups||[]);var html='';
+ fGroups.forEach(function(g,gi){
+  html+='<div class="fgh"><span>'+esc(g.group)+'</span><span>'+(fCanEdit?'<button class="btn sm" data-grp="'+gi+'" data-st="play">all on</button> <button class="btn sm" data-grp="'+gi+'" data-st="mute">all off</button>':'')+'</span></div>';
+  g.rows.forEach(function(r){var on=FQ.allows(f,r.tgid);
+   html+='<div class="ftg'+(on?'':' off')+'"><label><input type="checkbox" data-tg="'+r.tgid+'"'+(on?' checked':'')+(fCanEdit?'':' disabled')+'> '+esc(r.label)+
+    ' <span class="sub">'+r.tgid+(r.last_heard?' &middot; '+fAgo(r.last_heard):'')+(r.calls_24h?' &middot; '+r.calls_24h+'/24h':'')+'</span></label></div>'})});
+ $('flist').innerHTML=html||'<div class="note">no talkgroups heard in the last 7 days</div>'}
+function fChanged(){fDirty=true;$('fbtn').textContent=FQ.label(FLT);renderDrawer();clearTimeout(fSaveT);fSaveT=setTimeout(fSave,500)}
+function fSave(){fSaveT=null;fetch('/api/archive/filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({default:FLT.default,tg:FLT.tg})})
+ .then(function(r){if(r.status===403){fCanEdit=false;showToast('filter is view-only off-LAN (admin required)');fDirty=false;return fltLoad(true)}
+  if(!r.ok)throw 0;return r.json().then(function(d){FLT.updated=d.updated;if(!fSaveT)fDirty=false})})
+ .catch(function(){showToast('filter save failed — reverted');fDirty=false;fltLoad(true)})}
+$('src-live').addEventListener('click',function(){setSrc('live')});
+$('src-filt').addEventListener('click',function(){setSrc('filt')});
+$('fplay').addEventListener('click',function(){fArmed=!fArmed;$('fplay').innerHTML=fArmed?'&#9632; Stop':'&#9654; Listen';
+ if(fArmed){fNext()}else{fPlaying=null;fQueue=[];$('faudio').pause();fShowNow()}});
+$('faudio').addEventListener('ended',function(){if(fMode!=='calls')return;fPlaying=null;fNext()});
+$('faudio').addEventListener('error',function(){if(fMode!=='calls'||!fPlaying)return;fPlaying=null;fNext()});
+$('fbtn').addEventListener('click',function(){var d=$('fdrawer');d.hidden=!d.hidden;if(!d.hidden){renderDrawer();fltLoad()}});
+$('fdrawer').addEventListener('change',function(e){var t=e.target;if(!t.dataset||!t.dataset.tg||!FLT||!fCanEdit)return;
+ FLT.tg[t.dataset.tg]=t.checked?'play':'mute';fChanged()});
+$('fdrawer').addEventListener('click',function(e){var t=e.target;if(!FLT||!fCanEdit||!t.dataset)return;
+ if(t.dataset.def){FLT.default=t.dataset.def;fChanged()}
+ else if(t.dataset.grp!=null){FLT.tg=FQ.setGroup(FLT,fGroups[+t.dataset.grp].rows,t.dataset.st).tg;fChanged()}});
+$('faddbtn').addEventListener('click',function(){if(!FLT||!fCanEdit)return;var v=$('faddtg').value.trim();
+ if(!/^[1-9][0-9]{0,4}$/.test(v)||+v>65535){showToast('enter a talkgroup id (1-65535)');return}
+ FLT.tg[v]='play';FLT.talkgroups=FLT.talkgroups||[];
+ if(!FLT.talkgroups.some(function(r){return String(r.tgid)===v}))FLT.talkgroups.push({tgid:+v,label:'TG '+v,group:'other',last_heard:null,calls_24h:0,state:'play'});
+ $('faddtg').value='';fChanged()});
+fetch('/api/whoami',{cache:'no-store'}).then(function(r){return r.json()}).then(function(w){fCanEdit=!!w.admin}).catch(function(){});
 // ---- ATC tuner (preempts NOAA) ----
 function lcd(freq,mode,label){
  if(!freq){$('band').textContent='ATC';$('freq').innerHTML='---.---<span class="unit">MHz</span>';$('call').innerHTML='Airband / FM monitor &middot; pick a preset or direct-tune';return}
@@ -550,8 +657,9 @@ var sv=localStorage.getItem('mon.vol');if(sv!=null){$('vol').value=sv;$('vol').d
 var ss=localStorage.getItem('mon.sq');if(ss!=null){$('sq').value=ss;$('sq').dispatchEvent(new Event('input'))}
 function pollR2(){fetch('/api/r2/state',{cache:'no-store'}).then(function(r){return r.json()}).then(applyR2).catch(function(){})}
 (function(){var xb=$('xscript');if(xb)xb.addEventListener('scroll',function(){xsAtBottom=(xb.scrollHeight-xb.scrollTop-xb.clientHeight)<40})})();
-pollR2();pollMonitor();pollStatus();pollTranscript();
-setInterval(pollR2,4000);setInterval(pollMonitor,5000);setInterval(pollStatus,4000);setInterval(pollTranscript,5000);
+pollR2();pollMonitor();pollStatus();pollTranscript();fltLoad();
+(function(){var s='live';try{s=localStorage.getItem('p25src')||'live'}catch(e){}try{if(localStorage.getItem('p25fmode')==='stream')setFMode('stream')}catch(e){}if(s==='filt')setSrc('filt')})();
+setInterval(pollR2,4000);setInterval(pollMonitor,5000);setInterval(pollStatus,4000);setInterval(pollTranscript,5000);setInterval(fPoll,1500);setInterval(fltLoad,30000);
 </script></body></html>"""
 
 
