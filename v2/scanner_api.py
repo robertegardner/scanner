@@ -523,8 +523,9 @@ var FQ={
   rows.forEach(function(r){tg[String(r.tgid)]=state});return {default:f.default,tg:tg}}
 };
 /*FQ-END*/
-var FLT=null,fQueue=[],fSeen={},fAfter=null,fPlaying=null,fArmed=false,fSrc='live',fCanEdit=true,fSaveT=null,fGroups=[];
-function fltLoad(){return fetch('/api/archive/filter',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+var FLT=null,fQueue=[],fSeen={},fAfter=null,fPlaying=null,fArmed=false,fSrc='live',fCanEdit=true,fSaveT=null,fGroups=[],fDirty=false;
+function fltLoad(force){return fetch('/api/archive/filter',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(d){
+ if(fDirty&&!force)return;if(!d||typeof d.tg!=='object'||d.tg===null)return;
  FLT=d;$('fbtn').textContent=FQ.label(d);if(!$('fdrawer').hidden)renderDrawer()}).catch(function(){})}
 function fAgo(ts){var s=Math.max(0,Date.now()/1000-ts);return s<90?Math.round(s)+'s ago':s<5400?Math.round(s/60)+'m ago':s<172800?Math.round(s/3600)+'h ago':Math.round(s/86400)+'d ago'}
 function fClock(ts){return new Date(ts*1000).toLocaleTimeString([],{hour12:false})}
@@ -555,11 +556,11 @@ function renderDrawer(){var f=FLT;if(!f)return;
    html+='<div class="ftg'+(on?'':' off')+'"><label><input type="checkbox" data-tg="'+r.tgid+'"'+(on?' checked':'')+(fCanEdit?'':' disabled')+'> '+esc(r.label)+
     ' <span class="sub">'+r.tgid+(r.last_heard?' &middot; '+fAgo(r.last_heard):'')+(r.calls_24h?' &middot; '+r.calls_24h+'/24h':'')+'</span></label></div>'})});
  $('flist').innerHTML=html||'<div class="note">no talkgroups heard in the last 7 days</div>'}
-function fChanged(){$('fbtn').textContent=FQ.label(FLT);renderDrawer();clearTimeout(fSaveT);fSaveT=setTimeout(fSave,500)}
-function fSave(){fetch('/api/archive/filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({default:FLT.default,tg:FLT.tg})})
- .then(function(r){if(r.status===403){fCanEdit=false;showToast('filter is view-only off-LAN (admin required)');return fltLoad()}
-  if(!r.ok)throw 0;return r.json().then(function(d){FLT.updated=d.updated})})
- .catch(function(){showToast('filter save failed — reverted');fltLoad()})}
+function fChanged(){fDirty=true;$('fbtn').textContent=FQ.label(FLT);renderDrawer();clearTimeout(fSaveT);fSaveT=setTimeout(fSave,500)}
+function fSave(){fSaveT=null;fetch('/api/archive/filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({default:FLT.default,tg:FLT.tg})})
+ .then(function(r){if(r.status===403){fCanEdit=false;showToast('filter is view-only off-LAN (admin required)');fDirty=false;return fltLoad(true)}
+  if(!r.ok)throw 0;return r.json().then(function(d){FLT.updated=d.updated;if(!fSaveT)fDirty=false})})
+ .catch(function(){showToast('filter save failed — reverted');fDirty=false;fltLoad(true)})}
 $('src-live').addEventListener('click',function(){setSrc('live')});
 $('src-filt').addEventListener('click',function(){setSrc('filt')});
 $('fplay').addEventListener('click',function(){fArmed=!fArmed;$('fplay').innerHTML=fArmed?'&#9632; Stop':'&#9654; Listen';

@@ -44,6 +44,20 @@ class MarkupTest(unittest.TestCase):
     def test_filter_saved_with_post_json(self):
         self.assertIn("fetch('/api/archive/filter',{method:'POST',headers:{'Content-Type':'application/json'}", HTML)
 
+    def test_fltload_checks_ok_and_shape(self):
+        m = re.search(r"function fltLoad\(force\)\{.*?\n function|function fltLoad\(force\)\{[^\n]*\n[^\n]*\n[^\n]*\n", HTML, re.S)
+        self.assertTrue(m)
+        body = m.group(0)
+        self.assertIn("if(!r.ok)throw 0;return r.json()", body)
+        self.assertIn("typeof d.tg!=='object'", body)
+
+    def test_fltload_skips_while_dirty_but_revert_forces(self):
+        self.assertIn("if(fDirty&&!force)return;", HTML)
+        self.assertIn("function fChanged(){fDirty=true;", HTML)
+        self.assertIn("fDirty=false;return fltLoad(true)", HTML)
+        self.assertIn("fDirty=false;fltLoad(true)", HTML)
+        self.assertIn("if(!fSaveT)fDirty=false", HTML)
+
 
 class FqTest(unittest.TestCase):
     def test_allows(self):
