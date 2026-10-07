@@ -387,6 +387,7 @@ audio{width:100%;height:40px}
 <div class="srcsw" id="p25src"><button id="src-live" class="sel">Live &middot; all talkgroups</button><button id="src-filt">Filtered</button></div>
 <audio id="p25audio" controls preload="none"></audio>
 <div id="fpanel" hidden>
+<div class="srcsw"><button id="fmode-calls" class="sel">call-by-call</button><button id="fmode-stream">stream (/ems-filtered.mp3)</button></div>
 <div class="fnow" id="fnow">press Listen &mdash; filtered calls play as they finish</div>
 <audio id="faudio" controls preload="none"></audio>
 <div class="fbar"><button class="btn primary" id="fplay">&#9654; Listen</button><span id="fstat"></span><button class="btn" id="fbtn">Filter</button></div>
@@ -523,7 +524,7 @@ var FQ={
   rows.forEach(function(r){tg[String(r.tgid)]=state});return {default:f.default,tg:tg}}
 };
 /*FQ-END*/
-var FLT=null,fQueue=[],fSeen={},fAfter=null,fPlaying=null,fArmed=false,fSrc='live',fCanEdit=true,fSaveT=null,fGroups=[],fDirty=false;
+var FLT=null,fQueue=[],fSeen={},fAfter=null,fPlaying=null,fArmed=false,fSrc='live',fCanEdit=true,fSaveT=null,fGroups=[],fDirty=false,fMode='calls';
 function fltLoad(force){return fetch('/api/archive/filter',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(d){
  if(fDirty&&!force)return;if(!d||typeof d.tg!=='object'||d.tg===null)return;
  FLT=d;$('fbtn').textContent=FQ.label(d);if(!$('fdrawer').hidden)renderDrawer()}).catch(function(){})}
@@ -536,7 +537,7 @@ function fShowNow(){var c=fPlaying;
 function fNext(){var a=$('faudio');fPlaying=fArmed?(fQueue.shift()||null):null;fShowNow();if(!fPlaying)return;
  a.src=fPlaying.url;var p=a.play();
  if(p&&p.catch)p.catch(function(e){if(e&&e.name==='NotAllowedError'){fQueue.unshift(fPlaying);fPlaying=null;fArmed=false;$('fplay').innerHTML='&#9654; Listen';fShowNow()}})}
-function fPoll(){if(fSrc!=='filt')return;
+function fPoll(){if(fSrc!=='filt'||fMode!=='calls')return;
  fetch('/api/archive/live'+(fAfter==null?'':'?after='+fAfter),{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(d){
   fAfter=d.last_id;if(!fArmed){fShowNow();return}
   var m=FQ.merge(fQueue,d.calls||[],fSeen,Date.now()/1000,120);fQueue=m.queue;
@@ -546,6 +547,13 @@ function setSrc(s){fSrc=s;try{localStorage.setItem('p25src',s)}catch(e){}
  $('src-live').classList.toggle('sel',s==='live');$('src-filt').classList.toggle('sel',s==='filt');
  $('p25audio').hidden=s!=='live';$('fpanel').hidden=s!=='filt';
  if(s==='filt'){$('p25audio').pause();fltLoad();fPoll()}else{fArmed=false;fPlaying=null;fQueue=[];$('faudio').pause();$('fdrawer').hidden=true;$('fplay').innerHTML='&#9654; Listen'}}
+function setFMode(m){fMode=m;try{localStorage.setItem('p25fmode',m)}catch(e){}
+ $('fmode-calls').classList.toggle('sel',m==='calls');$('fmode-stream').classList.toggle('sel',m==='stream');
+ fArmed=false;fPlaying=null;fQueue=[];var a=$('faudio');a.pause();$('fplay').innerHTML='&#9654; Listen';
+ if(m==='stream'){a.src=ICE+'/ems-filtered.mp3';$('fplay').hidden=true;$('fnow').textContent='server-filtered stream \u00b7 ~2 s behind live \u00b7 same URL works on speakers/apps'}
+ else{a.removeAttribute('src');a.load();$('fplay').hidden=false;fShowNow()}}
+$('fmode-calls').addEventListener('click',function(){setFMode('calls')});
+$('fmode-stream').addEventListener('click',function(){setFMode('stream')});
 function renderDrawer(){var f=FLT;if(!f)return;
  Array.prototype.forEach.call(document.querySelectorAll('#fdrawer [data-def]'),function(b){b.classList.toggle('sel',b.dataset.def===f.default)});
  $('fnote').textContent=fCanEdit?'':'view only — changing the filter needs admin sign-in';
@@ -565,8 +573,8 @@ $('src-live').addEventListener('click',function(){setSrc('live')});
 $('src-filt').addEventListener('click',function(){setSrc('filt')});
 $('fplay').addEventListener('click',function(){fArmed=!fArmed;$('fplay').innerHTML=fArmed?'&#9632; Stop':'&#9654; Listen';
  if(fArmed){fNext()}else{fPlaying=null;fQueue=[];$('faudio').pause();fShowNow()}});
-$('faudio').addEventListener('ended',function(){fPlaying=null;fNext()});
-$('faudio').addEventListener('error',function(){if(!fPlaying)return;fPlaying=null;fNext()});
+$('faudio').addEventListener('ended',function(){if(fMode!=='calls')return;fPlaying=null;fNext()});
+$('faudio').addEventListener('error',function(){if(fMode!=='calls'||!fPlaying)return;fPlaying=null;fNext()});
 $('fbtn').addEventListener('click',function(){var d=$('fdrawer');d.hidden=!d.hidden;if(!d.hidden){renderDrawer();fltLoad()}});
 $('fdrawer').addEventListener('change',function(e){var t=e.target;if(!t.dataset||!t.dataset.tg||!FLT||!fCanEdit)return;
  FLT.tg[t.dataset.tg]=t.checked?'play':'mute';fChanged()});
@@ -649,7 +657,7 @@ var ss=localStorage.getItem('mon.sq');if(ss!=null){$('sq').value=ss;$('sq').disp
 function pollR2(){fetch('/api/r2/state',{cache:'no-store'}).then(function(r){return r.json()}).then(applyR2).catch(function(){})}
 (function(){var xb=$('xscript');if(xb)xb.addEventListener('scroll',function(){xsAtBottom=(xb.scrollHeight-xb.scrollTop-xb.clientHeight)<40})})();
 pollR2();pollMonitor();pollStatus();pollTranscript();fltLoad();
-(function(){var s='live';try{s=localStorage.getItem('p25src')||'live'}catch(e){}if(s==='filt')setSrc('filt')})();
+(function(){var s='live';try{s=localStorage.getItem('p25src')||'live'}catch(e){}if(s==='filt')setSrc('filt');try{if(localStorage.getItem('p25fmode')==='stream')setFMode('stream')}catch(e){}})();
 setInterval(pollR2,4000);setInterval(pollMonitor,5000);setInterval(pollStatus,4000);setInterval(pollTranscript,5000);setInterval(fPoll,1500);setInterval(fltLoad,30000);
 </script></body></html>"""
 

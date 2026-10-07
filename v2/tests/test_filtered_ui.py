@@ -41,6 +41,17 @@ class MarkupTest(unittest.TestCase):
     def test_clip_error_skips_to_next(self):
         self.assertRegex(HTML, r"faudio'\)\.addEventListener\('error',function\(\)\{[^}]*fNext\(\)")
 
+    def test_stream_mode_choice(self):
+        for s in ('id="fmode-calls"', 'id="fmode-stream"', "ICE+'/ems-filtered.mp3'", "'p25fmode'"):
+            self.assertIn(s, HTML, s)
+
+    def test_stream_mode_does_not_poll_clips(self):
+        self.assertIn("if(fSrc!=='filt'||fMode!=='calls')return;", HTML)
+
+    def test_stream_mode_does_not_advance_queue(self):
+        self.assertIn("addEventListener('ended',function(){if(fMode!=='calls')return;", HTML)
+        self.assertIn("addEventListener('error',function(){if(fMode!=='calls'||!fPlaying)return;", HTML)
+
     def test_filter_saved_with_post_json(self):
         self.assertIn("fetch('/api/archive/filter',{method:'POST',headers:{'Content-Type':'application/json'}", HTML)
 
