@@ -107,5 +107,19 @@ class FqTest(unittest.TestCase):
             [{"1": "play"}, {"1": "mute", "2": "mute"}, "play"])
 
 
+class RaceGuardTest(unittest.TestCase):
+    def test_poll_then_guarded_against_mode_switch(self):
+        m = re.search(r"function fPoll\(\).*?\.then\(function\(d\)\{\s*(.{0,80})", HTML, re.S)
+        self.assertTrue(m)
+        self.assertTrue(m.group(1).startswith("if(fSrc!=='filt'||fMode!=='calls')return;"), m.group(1))
+
+    def test_startup_restores_fmode_before_setsrc(self):
+        i = HTML.index("localStorage.getItem('p25fmode')==='stream'")
+        self.assertLess(i, HTML.index("if(s==='filt')setSrc('filt')", i))
+
+    def test_stream_mode_clears_stale_status(self):
+        self.assertIn("$('fplay').hidden=true;$('fstat').textContent='';", HTML)
+
+
 if __name__ == "__main__":
     unittest.main()
